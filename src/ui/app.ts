@@ -90,7 +90,7 @@ export class App implements PanelHost {
           <div class="lang-toggle js-lang" role="group">
             ${LOCALES.map(
               (l) =>
-                `<button type="button" data-locale="${l.code}" aria-label="${l.label}">` +
+                `<button type="button" data-locale="${l.code}" aria-label="${l.label} ${l.code.toUpperCase()}">` +
                 `<span class="lang-full">${l.label}</span><span class="lang-short" aria-hidden="true">${l.code.toUpperCase()}</span></button>`,
             ).join('')}
           </div>
