@@ -41,6 +41,9 @@ jobs:
 
       - name: Pages 설정
         uses: actions/configure-pages@v6
+        with:
+          # 저장소 설정에서 Pages 를 켜두지 않았어도 워크플로가 직접 활성화한다
+          enablement: true
 
       - name: 결과물 업로드
         uses: actions/upload-pages-artifact@v5
