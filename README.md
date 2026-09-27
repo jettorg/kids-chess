@@ -132,6 +132,10 @@ tests/        Vitest 단위 테스트
 설정, 언어, 진행 중인 판, 레슨·퍼즐 완료 기록은 브라우저 localStorage 에 저장됩니다.
 서버로 아무것도 보내지 않습니다.
 
+## 알려진 한계
+
+남은 한계와 보완 방법은 [docs/limitations.md](docs/limitations.md) 에 정리돼 있습니다.
+
 ## 출처
 
 - 퍼즐: [Lichess 퍼즐 데이터베이스](https://database.lichess.org) (CC0 1.0)

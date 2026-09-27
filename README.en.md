@@ -132,6 +132,10 @@ without a connection after the first visit. New releases take effect on the next
 Settings, language, the game in progress, and lesson/puzzle completion are kept in the browser's localStorage.
 Nothing is sent to a server.
 
+## Known limitations
+
+Remaining limitations and how to address them are documented in [docs/limitations.en.md](docs/limitations.en.md).
+
 ## Credits
 
 - Puzzles: [Lichess puzzle database](https://database.lichess.org) (CC0 1.0)
