@@ -1,0 +1,22 @@
+{
+  "name": "kids-chess",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "아이와 함께 두는 체스",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "dev:host": "vite --host",
+    "preview:host": "vite preview --host"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2",
+    "vite": "^6.0.5",
+    "vitest": "^5.0.2"
+  }
+}
