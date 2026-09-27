@@ -161,12 +161,17 @@ function checkTime(ctx: SearchContext): void {
   }
 }
 
-function terminalScore(pos: Position, depth: number, rootColor: Color): number {
+/** 메이트 점수. 루트에서 가까운 메이트일수록 크게 (정지 탐색에서 찾은 먼 메이트보다 바로 메이트를 선호) */
+function terminalScore(pos: Position, ply: number, rootColor: Color): number {
   if (isInCheck(pos, pos.turn)) {
-    // 체크메이트: 빨리 끝나는 메이트를 더 높게 평가한다.
-    return pos.turn === rootColor ? -MATE_SCORE - depth : MATE_SCORE + depth;
+    return pos.turn === rootColor ? -(MATE_SCORE - ply) : MATE_SCORE - ply;
   }
   return 0; // 스테일메이트
+}
+
+/** 메이트 점수인가 (100수 이내의 메이트) */
+function isMateScore(score: number): boolean {
+  return Math.abs(score) >= MATE_SCORE - 100;
 }
 
 /**
@@ -180,13 +185,14 @@ function quiesce(
   rootColor: Color,
   ctx: SearchContext,
   qDepth: number,
+  ply: number,
 ): number {
   ctx.nodes++;
   checkTime(ctx);
   if (ctx.aborted) return 0;
 
   const moves = generateLegalMoves(pos);
-  if (moves.length === 0) return terminalScore(pos, 0, rootColor);
+  if (moves.length === 0) return terminalScore(pos, ply, rootColor);
 
   const maximizing = pos.turn === rootColor;
   const inCheck = isInCheck(pos, pos.turn);
@@ -213,7 +219,7 @@ function quiesce(
   }
 
   for (const move of orderMoves(candidates)) {
-    const score = quiesce(applyMove(pos, move), alpha, beta, rootColor, ctx, qDepth + 1);
+    const score = quiesce(applyMove(pos, move), alpha, beta, rootColor, ctx, qDepth + 1, ply + 1);
     if (ctx.aborted) return 0;
     if (maximizing) {
       if (score > best) best = score;
@@ -234,14 +240,15 @@ function search(
   beta: number,
   rootColor: Color,
   ctx: SearchContext,
+  ply: number,
 ): number {
   ctx.nodes++;
   checkTime(ctx);
   if (ctx.aborted) return 0;
 
   const moves = generateLegalMoves(pos);
-  if (moves.length === 0) return terminalScore(pos, depth, rootColor);
-  if (depth === 0) return quiesce(pos, alpha, beta, rootColor, ctx, 0);
+  if (moves.length === 0) return terminalScore(pos, ply, rootColor);
+  if (depth === 0) return quiesce(pos, alpha, beta, rootColor, ctx, 0, ply);
 
   const key = positionKey(pos);
   const cached = ctx.table.get(key);
@@ -258,7 +265,7 @@ function search(
   let bestMove: Move | null = null;
 
   for (const move of orderWithHint(moves, cached)) {
-    const score = search(applyMove(pos, move), depth - 1, alpha, beta, rootColor, ctx);
+    const score = search(applyMove(pos, move), depth - 1, alpha, beta, rootColor, ctx, ply + 1);
     if (ctx.aborted) return 0;
     if (maximizing) {
       if (score > best) {
@@ -310,7 +317,7 @@ function searchRoot(
   let bestMoves: Move[] = [];
   let alpha = -Infinity;
   for (const move of ordered) {
-    const score = search(applyMove(pos, move), depth - 1, alpha, Infinity, rootColor, ctx);
+    const score = search(applyMove(pos, move), depth - 1, alpha, Infinity, rootColor, ctx, 1);
     if (ctx.aborted) return null;
     if (score > bestScore + 1e-9) {
       bestScore = score;
@@ -357,7 +364,7 @@ export function searchBestMove(
     // 다음 깊이에서는 방금 찾은 최선수를 먼저 보아 가지치기를 돕는다.
     ordered = [result.move, ...ordered.filter((m) => m !== result.move)];
     // 메이트를 찾았으면 더 깊이 볼 이유가 없다.
-    if (Math.abs(result.score) >= MATE_SCORE) break;
+    if (isMateScore(result.score)) break;
   }
   return best;
 }

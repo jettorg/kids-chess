@@ -960,17 +960,22 @@ export class App {
   private renderPuzzlePanel(): void {
     const puzzle = PUZZLES[this.puzzleIndex]!;
     const panel = this.el.panel;
+    const solved = this.progress.puzzles.includes(puzzle.id);
     panel.innerHTML = `
       <div class="card">
-        <h2>${L(puzzle.title)}</h2>
+        <div class="card-head">
+          <h2>${solved ? '✅ ' : ''}${L(puzzle.title)}</h2>
+          ${puzzle.rating ? `<span class="muted">${t('puzzleRating', puzzle.rating)}</span>` : ''}
+        </div>
         <p>${t('puzzleTask')}</p>
         <div class="choice-row js-puzzle-controls"></div>
         <p class="muted js-puzzle-hint hidden">${L(puzzle.hint)}</p>
       </div>
       <div class="card">
-        <h2>${t('pickPuzzle')}</h2>
-        <div class="choice-row js-puzzle-list"></div>
+        <h2>${t('puzzleCounter', this.puzzleIndex + 1, PUZZLES.length)}</h2>
+        <div class="choice-row js-puzzle-nav"></div>
         <p class="muted">${t('puzzleProgress', this.progress.puzzles.length, PUZZLES.length)}</p>
+        ${puzzle.source === 'lichess' ? `<p class="muted">${t('lichessCredit')}</p>` : ''}
       </div>
     `;
 
@@ -994,17 +999,18 @@ export class App {
       }, 'chip'),
     );
 
-    const list = panel.querySelector<HTMLElement>('.js-puzzle-list')!;
-    PUZZLES.forEach((item, index) => {
-      const done = this.progress.puzzles.includes(item.id);
-      list.appendChild(
-        this.button(
-          `${done ? '✅ ' : ''}${index + 1}`,
-          () => this.startPuzzle(index),
-          index === this.puzzleIndex ? 'chip active' : 'chip',
-        ),
-      );
-    });
+    const nav = panel.querySelector<HTMLElement>('.js-puzzle-nav')!;
+    const prev = this.button(t('prevPuzzle'), () => this.startPuzzle(this.puzzleIndex - 1), 'chip');
+    prev.disabled = this.puzzleIndex === 0;
+    nav.appendChild(prev);
+    const next = this.button(t('nextPuzzleShort'), () => this.startPuzzle(this.puzzleIndex + 1), 'chip');
+    next.disabled = this.puzzleIndex >= PUZZLES.length - 1;
+    nav.appendChild(next);
+    const unsolvedIndex = PUZZLES.findIndex((item, index) => index > this.puzzleIndex && !this.progress.puzzles.includes(item.id));
+    const firstUnsolved = unsolvedIndex >= 0 ? unsolvedIndex : PUZZLES.findIndex((item) => !this.progress.puzzles.includes(item.id));
+    const jump = this.button(t('nextUnsolved'), () => this.startPuzzle(firstUnsolved), 'chip');
+    jump.disabled = firstUnsolved < 0 || firstUnsolved === this.puzzleIndex;
+    nav.appendChild(jump);
   }
 
   private renderGuide(): void {

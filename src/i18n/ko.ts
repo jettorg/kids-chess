@@ -110,6 +110,12 @@ export const ko = {
   showAnswer: '💡 정답 보여주기',
   pickPuzzle: '문제 고르기',
   puzzleProgress: (done: number, total: number) => `${done} / ${total} 문제를 풀었어요.`,
+  puzzleCounter: (n: number, total: number) => `문제 ${n} / ${total}`,
+  prevPuzzle: '◀ 이전',
+  nextPuzzleShort: '다음 ▶',
+  nextUnsolved: '⭐ 안 푼 문제',
+  puzzleRating: (rating: number) => `난이도 ${rating}`,
+  lichessCredit: 'Lichess 퍼즐 데이터베이스(CC0)에서 가져온 문제예요.',
 
   // 도감
   guideTitle: '말 도감',

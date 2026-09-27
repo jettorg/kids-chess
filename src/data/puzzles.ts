@@ -1,4 +1,6 @@
 import type { Localized } from '../i18n';
+import type { PieceType } from '../engine/types';
+import { GENERATED_PUZZLES } from './puzzles.generated';
 
 export interface Puzzle {
   id: string;
@@ -7,10 +9,23 @@ export interface Puzzle {
   /** 정답 예시 (from+to). 다른 체크메이트 수도 정답으로 인정한다. */
   solution: string;
   hint: Localized;
+  /** Lichess 난이도 레이팅 (가져온 문제만) */
+  rating?: number;
+  source?: 'lichess';
 }
 
-/** 모두 "흰색이 한 수로 체크메이트" 문제 */
-export const PUZZLES: Puzzle[] = [
+/** 메이트를 만드는 말에 따라 붙이는 힌트 */
+const PIECE_HINT: Record<PieceType, Localized> = {
+  q: { ko: '퀸으로 끝내 보세요.', en: 'Finish it with the queen.' },
+  r: { ko: '룩을 써 보세요.', en: 'Use a rook.' },
+  b: { ko: '비숍의 대각선을 따라가 보세요.', en: "Look along the bishop's diagonal." },
+  n: { ko: '나이트가 뛰어들 자리를 찾아보세요.', en: 'Find where the knight can jump in.' },
+  p: { ko: '폰이 끝내요! 승격도 생각해 보세요.', en: 'A pawn finishes it. Think about promotion.' },
+  k: { ko: '킹도 도울 수 있어요.', en: 'Even the king can help.' },
+};
+
+/** 직접 만든 입문 문제 6개. 모두 "흰색이 한 수로 체크메이트". */
+export const HANDMADE_PUZZLES: Puzzle[] = [
   {
     id: 'backrank',
     title: { ko: '1. 마지막 줄 공격', en: '1. Back-Rank Attack' },
@@ -71,4 +86,24 @@ export const PUZZLES: Puzzle[] = [
       en: 'Only the king guards the f7 pawn, and your bishop is watching f7 too.',
     },
   },
+];
+
+/**
+ * 전체 문제: 입문 6개 뒤에 Lichess 에서 가져온 문제가 쉬운 순으로 이어진다.
+ * 가져온 문제는 scripts/import-puzzles.ts 로 다시 만들 수 있다.
+ */
+export const PUZZLES: Puzzle[] = [
+  ...HANDMADE_PUZZLES,
+  ...GENERATED_PUZZLES.map((g, i) => {
+    const n = HANDMADE_PUZZLES.length + i + 1;
+    return {
+      id: `lichess-${g.id}`,
+      title: { ko: `${n}. 퍼즐`, en: `${n}. Puzzle` },
+      fen: g.fen,
+      solution: g.solution,
+      hint: PIECE_HINT[g.piece],
+      rating: g.rating,
+      source: 'lichess' as const,
+    };
+  }),
 ];

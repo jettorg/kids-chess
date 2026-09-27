@@ -105,6 +105,12 @@ export const en: typeof ko = {
   showAnswer: '💡 Show answer',
   pickPuzzle: 'Pick a puzzle',
   puzzleProgress: (done, total) => `${done} / ${total} puzzles solved.`,
+  puzzleCounter: (n, total) => `Puzzle ${n} / ${total}`,
+  prevPuzzle: '◀ Previous',
+  nextPuzzleShort: 'Next ▶',
+  nextUnsolved: '⭐ Next unsolved',
+  puzzleRating: (rating) => `Difficulty ${rating}`,
+  lichessCredit: 'Puzzle from the Lichess puzzle database (CC0).',
 
   guideTitle: 'The Pieces',
   guideLead: 'Each piece moves differently. The points show how strong it is.',

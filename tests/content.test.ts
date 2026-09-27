@@ -9,7 +9,8 @@ import {
 } from '../src/engine';
 import { chooseMove, searchBestMove, suggestMove } from '../src/ai/ai';
 import { LESSONS } from '../src/data/lessons';
-import { PUZZLES } from '../src/data/puzzles';
+import { HANDMADE_PUZZLES, PUZZLES } from '../src/data/puzzles';
+import { GENERATED_PUZZLES } from '../src/data/puzzles.generated';
 import { eul, euro } from '../src/ui/ko';
 
 function parseUci(text: string): { from: number; to: number } {
@@ -181,5 +182,30 @@ describe('한글 조사', () => {
   it('받침에 맞는 을/를 을 고른다', () => {
     expect(eul('폰 배우기')).toBe('폰 배우기를');
     expect(eul('룩')).toBe('룩을');
+  });
+});
+
+describe('가져온 퍼즐', () => {
+  it('입문 6개 뒤에 이어지고 ID 가 겹치지 않는다', () => {
+    expect(PUZZLES.length).toBe(HANDMADE_PUZZLES.length + GENERATED_PUZZLES.length);
+    expect(GENERATED_PUZZLES.length).toBeGreaterThanOrEqual(100);
+    expect(new Set(PUZZLES.map((p) => p.id)).size).toBe(PUZZLES.length);
+  });
+
+  it('난이도가 쉬운 순으로 정렬돼 있다', () => {
+    for (let i = 1; i < GENERATED_PUZZLES.length; i++) {
+      expect(GENERATED_PUZZLES[i]!.rating).toBeGreaterThanOrEqual(GENERATED_PUZZLES[i - 1]!.rating);
+    }
+  });
+
+  it('모두 흰색 차례이고 힌트가 메이트 말과 맞는다', () => {
+    for (const g of GENERATED_PUZZLES) {
+      const pos = parseFen(g.fen);
+      expect(pos.turn, g.id).toBe('w');
+      const { from, to } = parseUci(g.solution);
+      const move = findMove(pos, from, to);
+      expect(move, g.id).not.toBeNull();
+      expect(move!.promotion ?? move!.piece, g.id).toBe(g.piece);
+    }
   });
 });
