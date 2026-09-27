@@ -1,6 +1,8 @@
 import type { Color, Move, PieceType, Square } from '../engine/types';
 import { Game, findKing, fromAlgebraic, initialPosition, parseFen } from '../engine';
-import { AI_LEVELS, chooseMove, suggestMove, type AiLevel } from '../ai/ai';
+import { AI_LEVELS, type AiLevel } from '../ai/ai';
+import { AiClient } from '../ai/client';
+import type { MoveRef } from '../ai/worker';
 import { LESSONS, PIECE_GUIDE, RULES } from '../data/lessons';
 import { PUZZLES } from '../data/puzzles';
 import { L, LOCALES, getLocale, setLocale, t, type Locale } from '../i18n';
@@ -28,6 +30,9 @@ interface Progress {
 const SETTINGS_KEY = 'kids-chess.settings.v1';
 const PROGRESS_KEY = 'kids-chess.progress.v1';
 const SAVE_KEY = 'kids-chess.game.v1';
+
+/** 컴퓨터가 너무 즉답하면 기계적으로 느껴지므로 최소한 이만큼은 "생각하는" 것처럼 보이게 한다 */
+const MIN_THINK_MS = 320;
 
 const DEFAULT_SETTINGS: Settings = {
   sound: true,
@@ -65,7 +70,12 @@ export class App {
   private selected: Square | null = null;
   private hint: Move | null = null;
   private thinking = false;
+  private hintPending = false;
   private pendingPromotion: { from: Square; to: Square } | null = null;
+
+  /** 탐색은 Web Worker 에서 돈다. 세대 번호로 늦게 도착한 결과를 버린다. */
+  private ai = new AiClient();
+  private aiGeneration = 0;
 
   /** 대국 화면의 설정 카드를 펼쳐 둘지 (첫 수를 두면 접힌다) */
   private settingsOpen = true;
@@ -222,8 +232,16 @@ export class App {
     this.board.setLabel(t('boardLabel'));
   }
 
+  /** 진행 중인 탐색 결과를 무시하게 한다 (새 게임, 되돌리기, 화면 전환 시) */
+  private cancelThinking(): void {
+    this.aiGeneration++;
+    this.thinking = false;
+    this.hintPending = false;
+  }
+
   private setScreen(screen: Screen): void {
     if (this.screen === screen) return;
+    this.cancelThinking();
     this.screen = screen;
     this.selected = null;
     this.hint = null;
@@ -256,10 +274,12 @@ export class App {
     }
     this.selected = null;
     this.hint = null;
+    this.cancelThinking();
     this.maybeAiMove();
   }
 
   private newGame(): void {
+    this.cancelThinking();
     this.game = new Game(initialPosition());
     this.selected = null;
     this.hint = null;
@@ -276,6 +296,7 @@ export class App {
   }
 
   private startLesson(index: number): void {
+    this.cancelThinking();
     this.lessonIndex = Math.max(0, Math.min(index, LESSONS.length - 1));
     const lesson = LESSONS[this.lessonIndex]!;
     this.game = new Game(parseFen(lesson.fen), { singleSide: 'w' });
@@ -287,6 +308,7 @@ export class App {
   }
 
   private startPuzzle(index: number): void {
+    this.cancelThinking();
     this.puzzleIndex = Math.max(0, Math.min(index, PUZZLES.length - 1));
     const puzzle = PUZZLES[this.puzzleIndex]!;
     this.game = new Game(parseFen(puzzle.fen));
@@ -347,6 +369,7 @@ export class App {
   }
 
   private commitMove(move: Move): void {
+    this.cancelThinking();
     this.game.playMove(move);
     if (this.screen === 'play') this.settingsOpen = false;
     this.selected = null;
@@ -388,28 +411,42 @@ export class App {
     if (this.game.turn === this.settings.playerColor) return;
 
     const level = this.settings.opponent;
+    const generation = ++this.aiGeneration;
     this.thinking = true;
     this.render();
-    // 탐색이 화면을 멈추지 않도록 한 프레임 뒤에 실행한다.
-    setTimeout(() => {
-      const move = chooseMove(this.game.position, { level });
-      this.thinking = false;
-      if (!move) {
+    const started = performance.now();
+    void this.ai.choose(this.game.position, level).then((ref) => {
+      if (generation !== this.aiGeneration) return; // 그사이 새 게임·되돌리기가 있었음
+      const wait = Math.max(0, MIN_THINK_MS - (performance.now() - started));
+      setTimeout(() => {
+        if (generation !== this.aiGeneration) return;
+        this.thinking = false;
+        const move = this.resolveMove(ref);
+        if (!move) {
+          this.render();
+          return;
+        }
+        this.game.playMove(move);
+        if (move.captured) play('capture');
+        else play('move');
+        this.persistGame();
+        const status = this.game.status();
         this.render();
-        return;
-      }
-      this.game.playMove(move);
-      if (move.captured) play('capture');
-      else play('move');
-      this.persistGame();
-      const status = this.game.status();
-      this.render();
-      if (status.kind === 'playing') {
-        if (status.check) play('check');
-      } else {
-        this.announceEnd();
-      }
-    }, 320);
+        if (status.kind === 'playing') {
+          if (status.check) play('check');
+        } else {
+          this.announceEnd();
+        }
+      }, wait);
+    });
+  }
+
+  /** Worker 가 돌려준 좌표를 현재 배치의 합법 수로 바꾼다. 배치가 바뀌었으면 null. */
+  private resolveMove(ref: MoveRef | null): Move | null {
+    if (!ref) return null;
+    return (
+      this.game.legalMoves(ref.from).find((m) => m.to === ref.to && m.promotion === ref.promotion) ?? null
+    );
   }
 
   private undo(): void {
@@ -426,6 +463,7 @@ export class App {
     }
 
     if (this.game.moveCount === 0) return;
+    this.cancelThinking();
     if (this.settings.opponent === 'human') {
       this.game.undo();
     } else {
@@ -445,11 +483,26 @@ export class App {
   }
 
   private showHint(): void {
-    if (this.interactiveColor() === null) return;
-    const move = this.screen === 'puzzle' || this.screen === 'play'
-      ? suggestMove(this.game.position)
-      : this.game.legalMoves().find((m) => m.captured) ?? this.game.legalMoves()[0] ?? null;
-    if (!move) return;
+    if (this.interactiveColor() === null || this.hintPending) return;
+    if (this.screen === 'learn') {
+      // 연습 모드는 탐색 없이 잡는 수를 바로 알려준다.
+      const move = this.game.legalMoves().find((m) => m.captured) ?? this.game.legalMoves()[0] ?? null;
+      if (move) this.presentHint(move);
+      return;
+    }
+    const generation = this.aiGeneration;
+    this.hintPending = true;
+    this.render();
+    void this.ai.suggest(this.game.position).then((ref) => {
+      if (generation !== this.aiGeneration) return; // 그사이 수를 두었거나 화면이 바뀜
+      this.hintPending = false;
+      const move = this.resolveMove(ref);
+      if (move) this.presentHint(move);
+      else this.render();
+    });
+  }
+
+  private presentHint(move: Move): void {
     this.hint = move;
     this.selected = null;
     play('star');
@@ -843,8 +896,8 @@ export class App {
     const undoButton = this.button(t('undo'), () => this.undo(), 'chip');
     undoButton.disabled = this.game.moveCount === 0 || this.thinking;
     controls.appendChild(undoButton);
-    const hintButton = this.button(t('hint'), () => this.showHint(), 'chip');
-    hintButton.disabled = this.interactiveColor() === null;
+    const hintButton = this.button(this.hintPending ? '⏳' : t('hint'), () => this.showHint(), 'chip');
+    hintButton.disabled = this.interactiveColor() === null || this.hintPending;
     controls.appendChild(hintButton);
     controls.appendChild(
       this.button(t('flip'), () => {
