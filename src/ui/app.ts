@@ -1,90 +1,60 @@
 import type { Color, Move, PieceType, Square } from '../engine/types';
-import { Game, findKing, fromAlgebraic, initialPosition, parseFen } from '../engine';
-import { AI_LEVELS, type AiLevel } from '../ai/ai';
+import { Game, findKing, initialPosition, parseFen } from '../engine';
 import { AiClient } from '../ai/client';
 import type { MoveRef } from '../ai/worker';
-import { LESSONS, PIECE_GUIDE, RULES } from '../data/lessons';
+import { LESSONS } from '../data/lessons';
 import { PUZZLES } from '../data/puzzles';
 import { L, LOCALES, getLocale, setLocale, t, type Locale } from '../i18n';
 import { BoardView } from './board';
-import { pieceIcon, pieceSvg } from './pieces';
-import { celebrate } from './confetti';
+import { pieceSvg } from './pieces';
 import { isSoundEnabled, play, setSoundEnabled } from './sound';
+import { Banner, showPromotionDialog } from './dialogs';
+import { renderGuide, renderLearnPanel, renderPlayPanel, renderPuzzlePanel, type PanelHost } from './panels';
+import {
+  DEFAULT_SETTINGS,
+  PROGRESS_KEY,
+  SAVE_KEY,
+  SETTINGS_KEY,
+  load,
+  save,
+  type Progress,
+  type SavedGame,
+  type Settings,
+} from './storage';
 
 type Screen = 'play' | 'learn' | 'puzzle' | 'guide';
-type Opponent = 'human' | AiLevel;
-
-interface Settings {
-  sound: boolean;
-  coords: boolean;
-  opponent: Opponent;
-  playerColor: Color;
-  flipped: boolean;
-}
-
-interface Progress {
-  lessons: string[];
-  puzzles: string[];
-}
-
-const SETTINGS_KEY = 'kids-chess.settings.v1';
-const PROGRESS_KEY = 'kids-chess.progress.v1';
-const SAVE_KEY = 'kids-chess.game.v1';
 
 /** 컴퓨터가 너무 즉답하면 기계적으로 느껴지므로 최소한 이만큼은 "생각하는" 것처럼 보이게 한다 */
 const MIN_THINK_MS = 320;
 
-const DEFAULT_SETTINGS: Settings = {
-  sound: true,
-  coords: true,
-  opponent: 1,
-  playerColor: 'w',
-  flipped: false,
-};
+/**
+ * 앱 전체를 조율한다: 화면 전환, 한 판의 진행, 컴퓨터 상대, 배우기·퍼즐 판정.
+ * 오른쪽 패널의 그리기는 panels.ts, 결과 창과 승격 창은 dialogs.ts 에 있다.
+ */
+export class App implements PanelHost {
+  settings: Settings;
+  progress: Progress;
+  game: Game = new Game();
+  thinking = false;
+  hintPending = false;
+  /** 대국 화면의 설정 카드를 펼쳐 둘지 (첫 수를 두면 접힌다) */
+  settingsOpen = true;
+  lessonIndex = 0;
+  puzzleIndex = 0;
 
-function load<T>(key: string, fallback: T): T {
-  try {
-    const raw = localStorage.getItem(key);
-    if (!raw) return fallback;
-    return { ...fallback, ...(JSON.parse(raw) as T) };
-  } catch {
-    return fallback;
-  }
-}
-
-function save(key: string, value: unknown): void {
-  try {
-    localStorage.setItem(key, JSON.stringify(value));
-  } catch {
-    // 저장이 막혀 있어도 게임은 계속된다.
-  }
-}
-
-export class App {
-  private settings: Settings;
-  private progress: Progress;
   private screen: Screen = 'play';
-
-  private game: Game = new Game();
   private board: BoardView;
+  private banner: Banner;
   private selected: Square | null = null;
   private hint: Move | null = null;
-  private thinking = false;
-  private hintPending = false;
   private pendingPromotion: { from: Square; to: Square } | null = null;
+  private puzzleSolved = false;
+  /** 상태 줄에 잠시 보여줄 안내 (사전 키로 저장해 언어를 바꿔도 맞게 보이도록) */
+  private message: 'learnStuck' | 'puzzleWrong' | null = null;
 
   /** 탐색은 Web Worker 에서 돈다. 세대 번호로 늦게 도착한 결과를 버린다. */
   private ai = new AiClient();
   private aiGeneration = 0;
-
-  /** 대국 화면의 설정 카드를 펼쳐 둘지 (첫 수를 두면 접힌다) */
-  private settingsOpen = true;
-
-  private lessonIndex = 0;
-  private puzzleIndex = 0;
-  private puzzleSolved = false;
-  /** 상태 줄에 잠시 보여줄 안내 (사전 키로 저장해 언어를 바꿔도 맞게 보이도록) */
-  private message: 'learnStuck' | 'puzzleWrong' | null = null;
 
   private el: {
     app: HTMLElement;
@@ -92,7 +62,6 @@ export class App {
     tabs: HTMLElement;
     lang: HTMLElement;
     soundBtn: HTMLButtonElement;
-    stage: HTMLElement;
     boardHost: HTMLElement;
     status: HTMLElement;
     trayTop: HTMLElement;
@@ -149,7 +118,6 @@ export class App {
       tabs: q('.tabs'),
       lang: q('.js-lang'),
       soundBtn: q<HTMLButtonElement>('.js-sound'),
-      stage: q('.stage'),
       boardHost: q('.js-board'),
       status: q('.js-status'),
       trayTop: q('.js-tray-top'),
@@ -168,12 +136,12 @@ export class App {
         this.render();
       },
     });
+    this.banner = new Banner(this.el.banner, this.el.app);
 
     this.bindChrome();
-    this.bindBannerDismiss();
     this.restoreGame();
     this.renderChrome();
-    this.renderGuide();
+    renderGuide(this.el.guide);
     this.render();
   }
 
@@ -181,27 +149,26 @@ export class App {
 
   private bindChrome(): void {
     this.el.tabs.addEventListener('click', (event) => {
-      const button = (event.target as HTMLElement).closest<HTMLElement>('button[data-screen]');
-      if (!button) return;
-      this.setScreen(button.dataset.screen as Screen);
+      const el = (event.target as HTMLElement).closest<HTMLElement>('button[data-screen]');
+      if (el) this.setScreen(el.dataset.screen as Screen);
     });
 
     this.el.lang.addEventListener('click', (event) => {
-      const button = (event.target as HTMLElement).closest<HTMLElement>('button[data-locale]');
-      if (!button) return;
-      const locale = button.dataset.locale as Locale;
+      const el = (event.target as HTMLElement).closest<HTMLElement>('button[data-locale]');
+      if (!el) return;
+      const locale = el.dataset.locale as Locale;
       if (locale === getLocale()) return;
       setLocale(locale);
-      this.hideBanner();
+      this.banner.hide();
       this.renderChrome();
-      this.renderGuide();
+      renderGuide(this.el.guide);
       this.render();
     });
 
     this.el.soundBtn.addEventListener('click', () => {
       this.settings.sound = !this.settings.sound;
       setSoundEnabled(this.settings.sound);
-      save(SETTINGS_KEY, this.settings);
+      this.saveSettings();
       if (this.settings.sound) play('star');
       this.render();
     });
@@ -218,25 +185,18 @@ export class App {
       puzzle: t('tabPuzzle'),
       guide: t('tabGuide'),
     };
-    this.el.tabs.querySelectorAll<HTMLElement>('button[data-screen]').forEach((button) => {
-      button.textContent = tabLabels[button.dataset.screen as Screen];
+    this.el.tabs.querySelectorAll<HTMLElement>('button[data-screen]').forEach((el) => {
+      el.textContent = tabLabels[el.dataset.screen as Screen];
     });
     this.el.tabs.setAttribute('aria-label', t('navLabel'));
     this.el.lang.setAttribute('aria-label', t('languageLabel'));
-    this.el.lang.querySelectorAll<HTMLElement>('button[data-locale]').forEach((button) => {
-      const active = button.dataset.locale === getLocale();
-      button.classList.toggle('active', active);
-      button.setAttribute('aria-pressed', String(active));
+    this.el.lang.querySelectorAll<HTMLElement>('button[data-locale]').forEach((el) => {
+      const active = el.dataset.locale === getLocale();
+      el.classList.toggle('active', active);
+      el.setAttribute('aria-pressed', String(active));
     });
     this.el.soundBtn.setAttribute('aria-label', t('soundToggle'));
     this.board.setLabel(t('boardLabel'));
-  }
-
-  /** 진행 중인 탐색 결과를 무시하게 한다 (새 게임, 되돌리기, 화면 전환 시) */
-  private cancelThinking(): void {
-    this.aiGeneration++;
-    this.thinking = false;
-    this.hintPending = false;
   }
 
   private setScreen(screen: Screen): void {
@@ -246,20 +206,21 @@ export class App {
     this.selected = null;
     this.hint = null;
     this.message = null;
-    this.hideBanner();
+    this.banner.hide();
     if (screen === 'learn') this.startLesson(this.lessonIndex);
     else if (screen === 'puzzle') this.startPuzzle(this.puzzleIndex);
     else if (screen === 'play') this.restoreGame();
     this.render();
   }
 
+  saveSettings(): void {
+    save(SETTINGS_KEY, this.settings);
+  }
+
   // ───────────────────────── 게임 생성 ─────────────────────────
 
   private restoreGame(): void {
-    const saved = load<{ start?: string; moves?: { from: number; to: number; promotion?: PieceType }[] }>(
-      SAVE_KEY,
-      {},
-    );
+    const saved = load<SavedGame>(SAVE_KEY, {});
     this.game = new Game(initialPosition());
     if (saved.start && saved.moves) {
       try {
@@ -278,13 +239,13 @@ export class App {
     this.maybeAiMove();
   }
 
-  private newGame(): void {
+  newGame(): void {
     this.cancelThinking();
     this.game = new Game(initialPosition());
     this.selected = null;
     this.hint = null;
     this.message = null;
-    this.hideBanner();
+    this.banner.hide();
     this.persistGame();
     this.render();
     this.maybeAiMove();
@@ -295,7 +256,7 @@ export class App {
     save(SAVE_KEY, this.game.serialize());
   }
 
-  private startLesson(index: number): void {
+  startLesson(index: number): void {
     this.cancelThinking();
     this.lessonIndex = Math.max(0, Math.min(index, LESSONS.length - 1));
     const lesson = LESSONS[this.lessonIndex]!;
@@ -303,11 +264,11 @@ export class App {
     this.selected = null;
     this.hint = null;
     this.message = null;
-    this.hideBanner();
+    this.banner.hide();
     this.render();
   }
 
-  private startPuzzle(index: number): void {
+  startPuzzle(index: number): void {
     this.cancelThinking();
     this.puzzleIndex = Math.max(0, Math.min(index, PUZZLES.length - 1));
     const puzzle = PUZZLES[this.puzzleIndex]!;
@@ -316,14 +277,14 @@ export class App {
     this.hint = null;
     this.puzzleSolved = false;
     this.message = null;
-    this.hideBanner();
+    this.banner.hide();
     this.render();
   }
 
   // ───────────────────────── 조작 ─────────────────────────
 
   /** 지금 아이(또는 사람)가 만질 수 있는 색 */
-  private interactiveColor(): Color | null {
+  interactiveColor(): Color | null {
     if (this.thinking || this.pendingPromotion) return null;
     if (this.screen === 'guide') return null;
     if (this.screen === 'learn') return 'w';
@@ -347,8 +308,7 @@ export class App {
     if (this.interactiveColor() === null) return;
     const options = this.game.legalMoves(from).filter((m) => m.to === to);
     if (options.length === 0) {
-      const piece = this.game.position.board[from];
-      if (piece) {
+      if (this.game.position.board[from]) {
         play('nope');
         this.board.shake(to);
       }
@@ -361,7 +321,15 @@ export class App {
       this.pendingPromotion = { from, to };
       this.selected = null;
       this.render();
-      this.showPromotionDialog();
+      showPromotionDialog(this.el.promo, this.game.turn, (promotion: PieceType) => {
+        const pending = this.pendingPromotion;
+        this.pendingPromotion = null;
+        const move = pending
+          ? this.game.legalMoves(pending.from).find((m) => m.to === pending.to && m.promotion === promotion)
+          : undefined;
+        if (move) this.commitMove(move);
+        else this.render();
+      });
       return;
     }
 
@@ -404,6 +372,48 @@ export class App {
     this.announceEnd();
   }
 
+  undo(): void {
+    if (this.screen === 'puzzle') {
+      this.startPuzzle(this.puzzleIndex);
+      return;
+    }
+    if (this.screen === 'learn') {
+      this.game.undo();
+      this.selected = null;
+      this.banner.hide();
+      this.render();
+      return;
+    }
+
+    if (this.game.moveCount === 0) return;
+    this.cancelThinking();
+    if (this.settings.opponent === 'human') {
+      this.game.undo();
+    } else {
+      // 컴퓨터와 둘 때는 내 차례가 돌아올 때까지 되돌린다.
+      while (this.game.undo()) {
+        if (this.game.turn === this.settings.playerColor) break;
+      }
+    }
+    this.selected = null;
+    this.hint = null;
+    this.message = null;
+    this.banner.hide();
+    this.persistGame();
+    this.render();
+    // 컴퓨터가 선인 첫 수까지 되돌렸다면 컴퓨터가 다시 시작한다.
+    this.maybeAiMove();
+  }
+
+  // ───────────────────────── 컴퓨터 상대와 힌트 ─────────────────────────
+
+  /** 진행 중인 탐색 결과를 무시하게 한다 (새 게임, 되돌리기, 화면 전환 시) */
+  private cancelThinking(): void {
+    this.aiGeneration++;
+    this.thinking = false;
+    this.hintPending = false;
+  }
+
   private maybeAiMove(): void {
     if (this.screen !== 'play') return;
     if (this.settings.opponent === 'human') return;
@@ -444,45 +454,10 @@ export class App {
   /** Worker 가 돌려준 좌표를 현재 배치의 합법 수로 바꾼다. 배치가 바뀌었으면 null. */
   private resolveMove(ref: MoveRef | null): Move | null {
     if (!ref) return null;
-    return (
-      this.game.legalMoves(ref.from).find((m) => m.to === ref.to && m.promotion === ref.promotion) ?? null
-    );
+    return this.game.legalMoves(ref.from).find((m) => m.to === ref.to && m.promotion === ref.promotion) ?? null;
   }
 
-  private undo(): void {
-    if (this.screen === 'puzzle') {
-      this.startPuzzle(this.puzzleIndex);
-      return;
-    }
-    if (this.screen === 'learn') {
-      this.game.undo();
-      this.selected = null;
-      this.hideBanner();
-      this.render();
-      return;
-    }
-
-    if (this.game.moveCount === 0) return;
-    this.cancelThinking();
-    if (this.settings.opponent === 'human') {
-      this.game.undo();
-    } else {
-      // 컴퓨터와 둘 때는 내 차례가 돌아올 때까지 되돌린다.
-      while (this.game.undo()) {
-        if (this.game.turn === this.settings.playerColor) break;
-      }
-    }
-    this.selected = null;
-    this.hint = null;
-    this.message = null;
-    this.hideBanner();
-    this.persistGame();
-    this.render();
-    // 컴퓨터가 선인 첫 수까지 되돌렸다면 컴퓨터가 다시 시작한다.
-    this.maybeAiMove();
-  }
-
-  private showHint(): void {
+  showHint(): void {
     if (this.interactiveColor() === null || this.hintPending) return;
     if (this.screen === 'learn') {
       // 연습 모드는 탐색 없이 잡는 수를 바로 알려준다.
@@ -502,6 +477,10 @@ export class App {
     });
   }
 
+  setHint(move: Move | null): void {
+    this.hint = move;
+  }
+
   private presentHint(move: Move): void {
     this.hint = move;
     this.selected = null;
@@ -515,121 +494,26 @@ export class App {
     }, 4000);
   }
 
-  // ───────────────────────── 승격 대화상자 ─────────────────────────
-
-  private showPromotionDialog(): void {
-    const color = this.game.turn;
-    const choices: PieceType[] = ['q', 'r', 'b', 'n'];
-    this.el.promo.classList.remove('hidden');
-    this.el.promo.innerHTML = `
-      <div class="card promo-card">
-        <h2>${t('promoTitle')}</h2>
-        <p>${t('promoText')}</p>
-        <div class="promo-choices">
-          ${choices
-            .map(
-              (type) => `
-            <button type="button" data-promo="${type}">
-              ${pieceSvg({ type, color })}
-              <span>${t('piece', type)}</span>
-            </button>`,
-            )
-            .join('')}
-        </div>
-      </div>
-    `;
-    this.el.promo.querySelectorAll<HTMLButtonElement>('button[data-promo]').forEach((button) => {
-      button.addEventListener('click', () => {
-        const promotion = button.dataset.promo as PieceType;
-        const pending = this.pendingPromotion;
-        this.pendingPromotion = null;
-        this.el.promo.classList.add('hidden');
-        this.el.promo.innerHTML = '';
-        if (!pending) return;
-        const move = this.game.legalMoves(pending.from).find(
-          (m) => m.to === pending.to && m.promotion === promotion,
-        );
-        if (move) this.commitMove(move);
-        else this.render();
-      });
-    });
-  }
-
-  // ───────────────────────── 결과 안내 ─────────────────────────
+  // ───────────────────────── 결과 판정 ─────────────────────────
 
   private announceEnd(): void {
     const status = this.game.status();
-    let title = '';
-    let detail = '';
-    let party = false;
-
     if (status.kind === 'checkmate') {
       const winnerIsPlayer =
         this.settings.opponent === 'human' || status.winner === this.settings.playerColor;
-      title = winnerIsPlayer ? t('mateTitleWin') : t('mateTitle');
-      detail = t('mateDetail', status.winner);
-      party = true;
+      play('win');
+      this.banner.show(
+        winnerIsPlayer ? t('mateTitleWin') : t('mateTitle'),
+        t('mateDetail', status.winner),
+        [{ label: t('playAgain'), action: () => this.newGame() }],
+        true,
+      );
     } else if (status.kind === 'stalemate') {
-      title = t('stalemateTitle');
-      detail = t('stalemateDetail');
+      this.banner.show(t('stalemateTitle'), t('stalemateDetail'), [{ label: t('playAgain'), action: () => this.newGame() }]);
     } else if (status.kind === 'draw') {
-      title = t('drawTitle');
-      detail = t('drawDetail', status.reason);
-    } else {
-      return;
+      this.banner.show(t('drawTitle'), t('drawDetail', status.reason), [{ label: t('playAgain'), action: () => this.newGame() }]);
     }
-
-    if (party) play('win');
-    this.showBanner(title, detail, [{ label: t('playAgain'), action: () => this.newGame() }], party);
   }
-
-  private showBanner(
-    title: string,
-    detail: string,
-    actions: { label: string; action: () => void }[],
-    party = false,
-  ): void {
-    this.el.banner.classList.remove('hidden');
-    this.el.banner.innerHTML = `
-      <div class="card banner-card">
-        <button type="button" class="close-btn js-close" aria-label="${t('close')}">✕</button>
-        <h2>${title}</h2>
-        <p>${detail}</p>
-        <div class="banner-actions"></div>
-      </div>
-    `;
-    this.el.banner.querySelector('.js-close')!.addEventListener('click', () => this.hideBanner());
-    const host = this.el.banner.querySelector('.banner-actions')!;
-    for (const item of actions) {
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'primary';
-      button.textContent = item.label;
-      button.addEventListener('click', () => {
-        this.hideBanner();
-        item.action();
-      });
-      host.appendChild(button);
-    }
-    if (party) celebrate(this.el.app);
-  }
-
-  /** 배경을 눌러도 결과 창이 닫히게 한다 (아이가 갇히지 않도록). */
-  private bindBannerDismiss(): void {
-    this.el.banner.addEventListener('pointerdown', (event) => {
-      if (event.target === this.el.banner) this.hideBanner();
-    });
-    window.addEventListener('keydown', (event) => {
-      if (event.key === 'Escape') this.hideBanner();
-    });
-  }
-
-  private hideBanner(): void {
-    this.el.banner.classList.add('hidden');
-    this.el.banner.innerHTML = '';
-  }
-
-  // ───────────────────────── 배우기 ─────────────────────────
 
   private remainingTargets(): Square[] {
     const out: Square[] = [];
@@ -641,8 +525,7 @@ export class App {
   }
 
   private checkLessonDone(): void {
-    const left = this.remainingTargets();
-    if (left.length > 0) {
+    if (this.remainingTargets().length > 0) {
       if (this.game.legalMoves().length === 0) {
         this.message = 'learnStuck';
         this.render();
@@ -656,7 +539,7 @@ export class App {
     }
     play('win');
     const isLast = this.lessonIndex >= LESSONS.length - 1;
-    this.showBanner(
+    this.banner.show(
       t('lessonDoneTitle'),
       t('lessonDoneDetail', L(lesson.title)),
       isLast
@@ -670,11 +553,8 @@ export class App {
     this.render();
   }
 
-  // ───────────────────────── 퍼즐 ─────────────────────────
-
   private checkPuzzleAnswer(): void {
-    const status = this.game.status();
-    if (status.kind === 'checkmate') {
+    if (this.game.status().kind === 'checkmate') {
       this.puzzleSolved = true;
       const puzzle = PUZZLES[this.puzzleIndex]!;
       if (!this.progress.puzzles.includes(puzzle.id)) {
@@ -683,7 +563,7 @@ export class App {
       }
       play('win');
       const isLast = this.puzzleIndex >= PUZZLES.length - 1;
-      this.showBanner(
+      this.banner.show(
         t('puzzleDoneTitle'),
         t('puzzleDoneDetail'),
         isLast
@@ -727,13 +607,13 @@ export class App {
     return status.check ? t('check', this.game.turn) : t('turn', this.game.turn);
   }
 
-  private render(): void {
+  render(): void {
     this.el.app.dataset.screen = this.screen;
-    this.el.tabs.querySelectorAll<HTMLElement>('button[data-screen]').forEach((button) => {
-      const active = button.dataset.screen === this.screen;
-      button.classList.toggle('active', active);
-      if (active) button.setAttribute('aria-current', 'page');
-      else button.removeAttribute('aria-current');
+    this.el.tabs.querySelectorAll<HTMLElement>('button[data-screen]').forEach((el) => {
+      const active = el.dataset.screen === this.screen;
+      el.classList.toggle('active', active);
+      if (active) el.setAttribute('aria-current', 'page');
+      else el.removeAttribute('aria-current');
     });
     this.el.app.classList.toggle('with-coords', this.settings.coords);
     this.el.soundBtn.textContent = isSoundEnabled() ? '🔊' : '🔈';
@@ -741,8 +621,7 @@ export class App {
 
     const status = this.game.status();
     const checkSquare =
-      this.screen !== 'learn' &&
-      (status.kind === 'checkmate' || (status.kind === 'playing' && status.check))
+      this.screen !== 'learn' && (status.kind === 'checkmate' || (status.kind === 'playing' && status.check))
         ? findKing(this.game.position, this.game.turn)
         : null;
 
@@ -772,7 +651,6 @@ export class App {
       return;
     }
     const { byWhite, byBlack } = this.game.captured();
-    const bottomColor = this.settings.flipped ? 'b' : 'w';
     // 비어 있으면 빈 문자열 — CSS 의 .tray:empty 가 높이를 0 으로 만든다.
     const tray = (taken: PieceType[], color: Color) =>
       taken
@@ -781,259 +659,20 @@ export class App {
         .map((type) => pieceSvg({ type, color }, 'tray-piece'))
         .join('');
     // 아래쪽 플레이어가 잡은 말을 아래 트레이에 보여준다.
-    if (bottomColor === 'w') {
-      this.el.trayTop.innerHTML = tray(byBlack, 'w');
-      this.el.trayBottom.innerHTML = tray(byWhite, 'b');
-    } else {
+    if (this.settings.flipped) {
       this.el.trayTop.innerHTML = tray(byWhite, 'b');
       this.el.trayBottom.innerHTML = tray(byBlack, 'w');
+    } else {
+      this.el.trayTop.innerHTML = tray(byBlack, 'w');
+      this.el.trayBottom.innerHTML = tray(byWhite, 'b');
     }
   }
 
-  private renderPanel(): void {
-    if (this.screen === 'guide') {
-      this.el.panel.innerHTML = '';
-      return;
-    }
-    if (this.screen === 'learn') {
-      this.renderLearnPanel();
-      return;
-    }
-    if (this.screen === 'puzzle') {
-      this.renderPuzzlePanel();
-      return;
-    }
-    this.renderPlayPanel();
-  }
-
-  private button(label: string, onClick: () => void, className = ''): HTMLButtonElement {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = className;
-    button.textContent = label;
-    button.addEventListener('click', onClick);
-    return button;
-  }
-
-  /** 접힌 설정 카드에 보여줄 한 줄 요약 */
-  private opponentSummary(): string {
-    if (this.settings.opponent === 'human') return t('humanSummary');
-    return t('aiSummary', t(`level${this.settings.opponent}`), this.settings.playerColor);
-  }
-
-  private renderPlayPanel(): void {
+  renderPanel(): void {
     const panel = this.el.panel;
-    const settingsBody = this.settingsOpen
-      ? '<div class="choice-row js-opponents"></div><div class="js-color-row"></div>'
-      : `<p class="summary">${this.opponentSummary()}</p>`;
-    panel.innerHTML = `
-      <div class="card">
-        <div class="card-head">
-          <h2>${t('opponent')}</h2>
-          <button type="button" class="ghost js-toggle-settings">${
-            this.settingsOpen ? t('collapse') : t('change')
-          }</button>
-        </div>
-        ${settingsBody}
-      </div>
-      <div class="card">
-        <h2>${t('helpers')}</h2>
-        <div class="choice-row js-controls"></div>
-      </div>
-      <div class="card">
-        <h2>${t('notation')}</h2>
-        <p class="notation js-notation"></p>
-      </div>
-    `;
-
-    panel.querySelector<HTMLButtonElement>('.js-toggle-settings')!.addEventListener('click', () => {
-      this.settingsOpen = !this.settingsOpen;
-      this.renderPanel();
-    });
-
-    const opponents = panel.querySelector<HTMLElement>('.js-opponents');
-    const makeOpponentButton = (value: Opponent, label: string, hint: string) => {
-      if (!opponents) return;
-      const button = this.button(label, () => {
-        this.settings.opponent = value;
-        save(SETTINGS_KEY, this.settings);
-        this.newGame();
-      }, this.settings.opponent === value ? 'chip active' : 'chip');
-      button.title = hint;
-      opponents.appendChild(button);
-    };
-    makeOpponentButton('human', t('human'), t('humanHint'));
-    for (const level of AI_LEVELS) {
-      makeOpponentButton(level, t(`level${level}`), t(`level${level}Hint`));
-    }
-
-    const colorRow = panel.querySelector<HTMLElement>('.js-color-row');
-    if (colorRow && this.settings.opponent !== 'human') {
-      colorRow.innerHTML = `<h3>${t('myColor')}</h3><div class="choice-row js-colors"></div>`;
-      const colors = colorRow.querySelector<HTMLElement>('.js-colors')!;
-      for (const color of ['w', 'b'] as Color[]) {
-        colors.appendChild(
-          this.button(
-            color === 'w' ? t('whiteFirst') : t('blackSecond'),
-            () => {
-              this.settings.playerColor = color;
-              this.settings.flipped = color === 'b';
-              save(SETTINGS_KEY, this.settings);
-              this.newGame();
-            },
-            this.settings.playerColor === color ? 'chip active' : 'chip',
-          ),
-        );
-      }
-      const p = document.createElement('p');
-      p.className = 'muted';
-      p.textContent = t(`level${this.settings.opponent}Hint`);
-      colorRow.appendChild(p);
-    }
-
-    const controls = panel.querySelector<HTMLElement>('.js-controls')!;
-    controls.appendChild(this.button(t('newGame'), () => this.newGame(), 'chip'));
-    const undoButton = this.button(t('undo'), () => this.undo(), 'chip');
-    undoButton.disabled = this.game.moveCount === 0 || this.thinking;
-    controls.appendChild(undoButton);
-    const hintButton = this.button(this.hintPending ? '⏳' : t('hint'), () => this.showHint(), 'chip');
-    hintButton.disabled = this.interactiveColor() === null || this.hintPending;
-    controls.appendChild(hintButton);
-    controls.appendChild(
-      this.button(t('flip'), () => {
-        this.settings.flipped = !this.settings.flipped;
-        save(SETTINGS_KEY, this.settings);
-        this.render();
-      }, 'chip'),
-    );
-    controls.appendChild(
-      this.button(
-        this.settings.coords ? t('hideCoords') : t('showCoords'),
-        () => {
-          this.settings.coords = !this.settings.coords;
-          save(SETTINGS_KEY, this.settings);
-          this.render();
-        },
-        'chip',
-      ),
-    );
-
-    const notation = panel.querySelector<HTMLElement>('.js-notation')!;
-    notation.textContent = this.game.notation() || t('noMoves');
-  }
-
-  private renderLearnPanel(): void {
-    const lesson = LESSONS[this.lessonIndex]!;
-    const panel = this.el.panel;
-    panel.innerHTML = `
-      <div class="card">
-        <h2>${L(lesson.title)}</h2>
-        <p>${L(lesson.intro)}</p>
-        <p class="muted">${L(lesson.tip)}</p>
-        <div class="choice-row js-lesson-controls"></div>
-      </div>
-      <div class="card">
-        <h2>${t('pickPiece')}</h2>
-        <div class="choice-row js-lesson-list"></div>
-      </div>
-    `;
-
-    const controls = panel.querySelector<HTMLElement>('.js-lesson-controls')!;
-    controls.appendChild(this.button(t('restart'), () => this.startLesson(this.lessonIndex), 'chip'));
-    const undoButton = this.button(t('undo'), () => this.undo(), 'chip');
-    undoButton.disabled = this.game.moveCount === 0;
-    controls.appendChild(undoButton);
-    controls.appendChild(this.button(t('help'), () => this.showHint(), 'chip'));
-
-    const list = panel.querySelector<HTMLElement>('.js-lesson-list')!;
-    LESSONS.forEach((item, index) => {
-      const done = this.progress.lessons.includes(item.id);
-      const button = this.button(
-        `${done ? '✅ ' : ''}${t('piece', item.piece)}`,
-        () => this.startLesson(index),
-        index === this.lessonIndex ? 'chip active' : 'chip',
-      );
-      list.appendChild(button);
-    });
-  }
-
-  private renderPuzzlePanel(): void {
-    const puzzle = PUZZLES[this.puzzleIndex]!;
-    const panel = this.el.panel;
-    const solved = this.progress.puzzles.includes(puzzle.id);
-    panel.innerHTML = `
-      <div class="card">
-        <div class="card-head">
-          <h2>${solved ? '✅ ' : ''}${L(puzzle.title)}</h2>
-          ${puzzle.rating ? `<span class="muted">${t('puzzleRating', puzzle.rating)}</span>` : ''}
-        </div>
-        <p>${t('puzzleTask')}</p>
-        <div class="choice-row js-puzzle-controls"></div>
-        <p class="muted js-puzzle-hint hidden">${L(puzzle.hint)}</p>
-      </div>
-      <div class="card">
-        <h2>${t('puzzleCounter', this.puzzleIndex + 1, PUZZLES.length)}</h2>
-        <div class="choice-row js-puzzle-nav"></div>
-        <p class="muted">${t('puzzleProgress', this.progress.puzzles.length, PUZZLES.length)}</p>
-        ${puzzle.source === 'lichess' ? `<p class="muted">${t('lichessCredit')}</p>` : ''}
-      </div>
-    `;
-
-    const controls = panel.querySelector<HTMLElement>('.js-puzzle-controls')!;
-    controls.appendChild(
-      this.button(t('restart'), () => this.startPuzzle(this.puzzleIndex), 'chip'),
-    );
-    controls.appendChild(
-      this.button(t('showHint'), () => {
-        panel.querySelector('.js-puzzle-hint')?.classList.remove('hidden');
-        play('star');
-      }, 'chip'),
-    );
-    controls.appendChild(
-      this.button(t('showAnswer'), () => {
-        const from = fromAlgebraic(puzzle.solution.slice(0, 2));
-        const to = fromAlgebraic(puzzle.solution.slice(2, 4));
-        this.hint = this.game.legalMoves(from).find((m) => m.to === to) ?? null;
-        play('star');
-        this.render();
-      }, 'chip'),
-    );
-
-    const nav = panel.querySelector<HTMLElement>('.js-puzzle-nav')!;
-    const prev = this.button(t('prevPuzzle'), () => this.startPuzzle(this.puzzleIndex - 1), 'chip');
-    prev.disabled = this.puzzleIndex === 0;
-    nav.appendChild(prev);
-    const next = this.button(t('nextPuzzleShort'), () => this.startPuzzle(this.puzzleIndex + 1), 'chip');
-    next.disabled = this.puzzleIndex >= PUZZLES.length - 1;
-    nav.appendChild(next);
-    const unsolvedIndex = PUZZLES.findIndex((item, index) => index > this.puzzleIndex && !this.progress.puzzles.includes(item.id));
-    const firstUnsolved = unsolvedIndex >= 0 ? unsolvedIndex : PUZZLES.findIndex((item) => !this.progress.puzzles.includes(item.id));
-    const jump = this.button(t('nextUnsolved'), () => this.startPuzzle(firstUnsolved), 'chip');
-    jump.disabled = firstUnsolved < 0 || firstUnsolved === this.puzzleIndex;
-    nav.appendChild(jump);
-  }
-
-  private renderGuide(): void {
-    this.el.guide.innerHTML = `
-      <h2 class="guide-title">${t('guideTitle')}</h2>
-      <p class="guide-lead">${t('guideLead')}</p>
-      <div class="guide-grid">
-        ${PIECE_GUIDE.map(
-          (item) => `
-          <article class="card guide-card">
-            <div class="guide-icons">${pieceIcon(item.type, 'w')}${pieceIcon(item.type, 'b')}</div>
-            <h3>${L(item.name)}</h3>
-            <p>${L(item.movement)}</p>
-            <p class="muted">${L(item.value)}</p>
-          </article>`,
-        ).join('')}
-      </div>
-      <div class="card guide-rules">
-        <h3>${t('rulesTitle')}</h3>
-        <ul>
-          ${RULES.map((rule) => `<li><strong>${L(rule.term)}</strong>: ${L(rule.text)}</li>`).join('')}
-        </ul>
-      </div>
-    `;
+    if (this.screen === 'guide') panel.innerHTML = '';
+    else if (this.screen === 'learn') renderLearnPanel(this, panel);
+    else if (this.screen === 'puzzle') renderPuzzlePanel(this, panel);
+    else renderPlayPanel(this, panel);
   }
 }
