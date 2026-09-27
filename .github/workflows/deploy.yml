@@ -33,11 +33,27 @@ jobs:
       - name: 의존성 설치
         run: npm ci
 
-      - name: 테스트
+      - name: 단위 테스트 (규칙 엔진·AI·콘텐츠)
         run: npm test
 
       - name: 빌드
         run: npm run build
+
+      - name: 브라우저 준비 (Playwright Chromium)
+        run: npx playwright install --with-deps chromium
+
+      - name: 브라우저 E2E 테스트 (배포 형태 그대로)
+        run: npx playwright test
+        env:
+          CI: 'true'
+
+      - name: E2E 실패 기록 보관
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report
+          path: playwright-report
+          retention-days: 7
 
       - name: Pages 설정
         uses: actions/configure-pages@v6
