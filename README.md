@@ -1,24 +1,38 @@
 # 우리 체스 (Kids Chess)
 
+[English](README.en.md)
+
 아이와 함께 두는 체스 게임. 웹 브라우저에서 돌아가고, 설치할 것도 계정도 없습니다.
+
+**바로 열기: https://jettorg.github.io/kids-chess/**
 
 ## 실행
 
 ```bash
 npm install
-npm run dev      # http://localhost:5173
+npm run dev          # http://localhost:5173
+npm run dev:host     # 같은 와이파이의 태블릿에서도 접속
 ```
 
 빌드와 검증:
 
 ```bash
 npm run build      # dist/ 에 정적 파일 생성 (tsc 검사 포함)
-npm test           # 규칙 엔진·AI·콘텐츠 테스트 54개
+npm test           # 규칙 엔진·AI·콘텐츠 테스트
 npm run typecheck
 ```
 
-`dist/` 는 정적 파일이라 GitHub Pages, Vercel, Netlify 어디든 그냥 올리면 됩니다.
-`vite.config.ts` 의 `base: './'` 덕분에 하위 경로에 올려도 동작합니다.
+`dist/` 는 정적 파일이라 어디든 올리면 됩니다. `vite.config.ts` 의 `base: './'` 덕분에 하위 경로에 올려도 동작합니다.
+
+## 배포
+
+main 브랜치에 푸시하면 `.github/workflows/deploy.yml` 이 테스트와 빌드를 거쳐 GitHub Pages 에 자동 배포합니다. 테스트가 깨지면 배포가 멈춥니다.
+
+## 언어
+
+한국어와 영어를 지원합니다. 처음 열면 브라우저 언어에 맞춰 정해지고, 상단의 **한국어 | English** 버튼으로 언제든 바꿀 수 있습니다. 선택은 기기에 저장됩니다.
+
+문구는 `src/i18n/ko.ts` 와 `src/i18n/en.ts` 에 있습니다. 두 파일은 같은 키를 가져야 컴파일되므로 한쪽만 고치면 타입 검사에서 바로 잡힙니다. 레슨·퍼즐·도감처럼 내용이 긴 것은 `src/data/` 에서 `{ ko, en }` 묶음으로 관리합니다.
 
 ## 화면 네 개
 
@@ -56,6 +70,7 @@ src/
     san.ts        기보 표기 (Nf3, exd5, O-O, Qh5#)
     game.ts       한 판의 진행·기보·되돌리기
   ai/ai.ts    난이도별 수 선택 (알파베타 탐색)
+  i18n/       문구 사전 (ko.ts, en.ts) 와 언어 선택
   ui/         화면
     board.ts      체스판 렌더링과 조작
                   판 크기는 style.css 의 --board 예산 계산으로 결정된다
@@ -64,7 +79,7 @@ src/
     sound.ts      WebAudio 효과음
     confetti.ts   승리 축하 효과
     ko.ts         한글 조사 처리 ("폰으로" / "나이트로")
-  data/       배우기 레슨과 퍼즐
+  data/       배우기 레슨, 퍼즐, 도감 (언어별 문구 포함)
 tests/        엔진·AI·콘텐츠 테스트
 ```
 
@@ -80,13 +95,13 @@ tests/        엔진·AI·콘텐츠 테스트
 
 ## 저장
 
-브라우저 localStorage 에 설정, 진행 중인 판, 레슨·퍼즐 완료 기록을 저장합니다.
+브라우저 localStorage 에 설정, 언어, 진행 중인 판, 레슨·퍼즐 완료 기록을 저장합니다.
 서버로 아무것도 보내지 않습니다.
 
 ## 더 붙일 만한 것
 
 - 배우기 레슨 추가 (체크 피하기, 캐슬링 연습, 폰 승격 연습)
 - 퍼즐 난이도 확장 (두 수 메이트, 공짜 말 잡기)
-- Stockfish.js 를 붙여 더 높은 난이도 추가
+- 컴퓨터 탐색을 Web Worker 로 옮겨 더 높은 난이도 추가
 - 기보를 PGN 으로 내보내기
 - 오프라인 실행 (Service Worker)

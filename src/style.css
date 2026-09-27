@@ -139,6 +139,29 @@ ul { margin: 0; padding-left: 20px; line-height: 1.7; }
 
 .icon-btn.muted { opacity: 0.55; }
 
+/* 언어 선택: 한국어 | English */
+.lang-toggle {
+  display: inline-flex;
+  border: 2px solid var(--line);
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--card);
+}
+
+.lang-toggle button {
+  border: none;
+  background: transparent;
+  color: var(--ink-soft);
+  font: inherit;
+  font-weight: 700;
+  font-size: 13px;
+  padding: 0 12px;
+  min-height: 44px;
+  cursor: pointer;
+}
+
+.lang-toggle button.active { background: var(--bg-2); color: var(--ink); }
+
 /* ───────── 전체 배치 ───────── */
 .layout {
   flex: 1 1 auto;
@@ -513,4 +536,6 @@ ul { margin: 0; padding-left: 20px; line-height: 1.7; }
   .tabs button { flex: 1; padding: 9px 8px; }
   .brand { width: 100%; text-align: center; }
   .icon-btn { position: absolute; top: 10px; right: clamp(12px, 3vw, 28px); }
+  .lang-toggle { position: absolute; top: 12px; left: var(--pad-x); }
+  .lang-toggle button { min-height: 40px; padding: 0 10px; }
 }

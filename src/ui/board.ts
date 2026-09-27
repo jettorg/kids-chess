@@ -1,6 +1,7 @@
 import type { Color, Move, Position, Square } from '../engine/types';
 import { FILES, fileOf, rankOf, squareAt, toAlgebraic } from '../engine/position';
 import { pieceSvg } from './pieces';
+import { t } from '../i18n';
 
 export interface BoardRenderState {
   position: Position;
@@ -51,7 +52,7 @@ export class BoardView {
     this.root.classList.add('board-wrap');
     this.root.innerHTML = `
       <div class="ranks" aria-hidden="true"></div>
-      <div class="board" role="grid" aria-label="체스판"></div>
+      <div class="board" role="grid" aria-label="${t('boardLabel')}"></div>
       <div class="files" aria-hidden="true"></div>
     `;
     this.ranks = this.root.querySelector('.ranks')!;
@@ -238,6 +239,11 @@ export class BoardView {
       piece.style.transition = 'transform 160ms ease-out';
       piece.style.transform = '';
     });
+  }
+
+  /** 언어가 바뀌면 접근성 라벨을 갱신한다. */
+  setLabel(label: string): void {
+    this.board.setAttribute('aria-label', label);
   }
 
   /** 잘못된 수를 두면 살짝 흔들어 알려준다. */

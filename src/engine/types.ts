@@ -70,16 +70,3 @@ export const PIECE_VALUE: Record<PieceType, number> = {
   k: 20000,
 };
 
-export const PIECE_NAME_KO: Record<PieceType, string> = {
-  p: '폰',
-  n: '나이트',
-  b: '비숍',
-  r: '룩',
-  q: '퀸',
-  k: '킹',
-};
-
-export const COLOR_NAME_KO: Record<Color, string> = {
-  w: '흰색',
-  b: '검은색',
-};

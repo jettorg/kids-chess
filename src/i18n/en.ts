@@ -1,0 +1,102 @@
+import type { Color, PieceType } from '../engine/types';
+import type { ko } from './ko';
+
+const PIECE: Record<PieceType, string> = { p: 'Pawn', n: 'Knight', b: 'Bishop', r: 'Rook', q: 'Queen', k: 'King' };
+const COLOR: Record<Color, string> = { w: 'White', b: 'Black' };
+
+/** 영어 문구. 한국어 사전과 같은 키를 모두 가져야 컴파일된다. */
+export const en: typeof ko = {
+  appTitle: 'Our Chess — Chess to play with your child',
+  brand: '♞ Our Chess',
+  tabPlay: 'Play',
+  tabLearn: 'Learn',
+  tabPuzzle: 'Puzzles',
+  tabGuide: 'Pieces',
+  soundToggle: 'Toggle sound',
+  languageLabel: 'Language',
+  boardLabel: 'Chess board',
+  close: 'Close',
+
+  piece: (type) => PIECE[type],
+  color: (color) => COLOR[color],
+
+  turn: (color) => `${COLOR[color]} to move`,
+  check: (color) => `Check! ${COLOR[color]} to move. Protect your king.`,
+  checkmateStatus: (winner) => `Checkmate! ${COLOR[winner]} wins 🎉`,
+  stalemateStatus: 'Stalemate — it\'s a draw.',
+  drawStatus: 'It\'s a draw.',
+  thinking: 'The computer is thinking…',
+  learnStatus: (piece, left) =>
+    `Use the ${PIECE[piece].toLowerCase()} to capture ${left} black ${left === 1 ? 'piece' : 'pieces'}.`,
+  learnDoneStatus: (title) => `${title} — done!`,
+  learnStuck: 'No moves left. Try Undo or Restart.',
+  puzzleStatus: 'White to move. Checkmate in one!',
+  puzzleSolvedStatus: 'Correct! Ready for the next one?',
+  puzzleWrong: 'That\'s not checkmate yet. Try again?',
+
+  mateTitleWin: 'Checkmate! 🎉',
+  mateTitle: 'Checkmate!',
+  mateDetail: (winner) => `${COLOR[winner]} wins.`,
+  stalemateTitle: 'Stalemate',
+  stalemateDetail: 'No legal moves, but no check either. So it\'s a draw!',
+  drawTitle: 'It\'s a draw',
+  drawDetail: (reason) =>
+    ({
+      fifty: 'Fifty moves passed without a capture or pawn move, so it\'s a draw.',
+      repetition: 'The same position appeared three times, so it\'s a draw.',
+      material: 'Neither side has enough pieces to checkmate, so it\'s a draw.',
+    })[reason],
+  playAgain: 'Play again!',
+  lessonDoneTitle: 'You got them all! 🎉',
+  lessonDoneDetail: (title) => `You finished ${title}.`,
+  goPuzzles: 'Try the puzzles',
+  nextLesson: 'Next lesson',
+  retry: 'Try again',
+  puzzleDoneTitle: 'Checkmate! Correct 🎉',
+  puzzleDoneDetail: 'The king has nowhere to run and no way to block.',
+  goPlay: 'Go play a game',
+  nextPuzzle: 'Next puzzle',
+
+  promoTitle: 'Your pawn reached the end!',
+  promoText: 'What should it become? Most people pick the mighty queen.',
+
+  opponent: 'Opponent',
+  collapse: 'Hide',
+  change: 'Change',
+  humanSummary: '👨‍👧 Two players, taking turns',
+  aiSummary: (label, color) => `${label} · You play ${COLOR[color]}`,
+  human: '👨‍👧 Two players',
+  humanHint: 'Take turns on one screen.',
+  level1: '🐣 Chick',
+  level1Hint: 'Moves at random. Great for first games.',
+  level2: '🐶 Puppy',
+  level2Hint: 'Captures whenever it can.',
+  level3: '🦊 Fox',
+  level3Hint: 'Looks a few moves ahead. Plays pretty well.',
+  myColor: 'My color',
+  whiteFirst: '⚪ White (first)',
+  blackSecond: '⚫ Black (second)',
+  helpers: 'Helpers',
+  newGame: '🔄 New game',
+  undo: '↩️ Undo',
+  hint: '💡 Hint',
+  flip: '🔃 Flip board',
+  hideCoords: '🔡 Hide coordinates',
+  showCoords: '🔡 Show coordinates',
+  notation: 'Moves',
+  noMoves: 'No moves yet.',
+
+  restart: '🔄 Restart',
+  help: '💡 Help',
+  pickPiece: 'Pick a piece to learn',
+
+  puzzleTask: 'White to move. Find the <strong>checkmate in one</strong>.',
+  showHint: '💬 Show hint',
+  showAnswer: '💡 Show answer',
+  pickPuzzle: 'Pick a puzzle',
+  puzzleProgress: (done, total) => `${done} / ${total} puzzles solved.`,
+
+  guideTitle: 'The Pieces',
+  guideLead: 'Each piece moves differently. The points show how strong it is.',
+  rulesTitle: 'Rules worth knowing',
+};

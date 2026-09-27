@@ -6,11 +6,8 @@ import { opposite } from '../engine/position';
 /** 1=병아리(아주 쉬움), 2=강아지(쉬움), 3=여우(보통) */
 export type AiLevel = 1 | 2 | 3;
 
-export const AI_LEVELS: { level: AiLevel; label: string; hint: string }[] = [
-  { level: 1, label: '🐣 병아리', hint: '아무 데나 두어요. 처음 배울 때 좋아요.' },
-  { level: 2, label: '🐶 강아지', hint: '잡을 수 있으면 잡아요.' },
-  { level: 3, label: '🦊 여우', hint: '몇 수 앞을 봐요. 제법 잘 둬요.' },
-];
+/** 난이도 목록. 이름과 설명은 i18n 사전의 level1/level1Hint … 키에 있다. */
+export const AI_LEVELS: readonly AiLevel[] = [1, 2, 3];
 
 const MATE_SCORE = 100000;
 
