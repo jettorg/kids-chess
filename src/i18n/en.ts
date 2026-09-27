@@ -16,6 +16,12 @@ export const en: typeof ko = {
   languageLabel: 'Language',
   boardLabel: 'Chess board',
   close: 'Close',
+  squareEmpty: 'empty',
+  squareSelected: 'selected',
+  squareCanMove: 'can move here',
+  squareCanCapture: 'can capture',
+  pieceWithColor: (color, type) => `${COLOR[color].toLowerCase()} ${PIECE[type].toLowerCase()}`,
+  navLabel: 'Screens',
 
   piece: (type) => PIECE[type],
   color: (color) => COLOR[color],

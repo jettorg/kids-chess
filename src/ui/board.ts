@@ -1,4 +1,4 @@
-import type { Color, Move, Position, Square } from '../engine/types';
+import type { Color, Move, Piece, Position, Square } from '../engine/types';
 import { FILES, fileOf, rankOf, squareAt, toAlgebraic } from '../engine/position';
 import { pieceSvg } from './pieces';
 import { t } from '../i18n';
@@ -27,20 +27,26 @@ export interface BoardCallbacks {
   onMoveAttempt(from: Square, to: Square): void;
   /** 내 말을 눌렀을 때 */
   onPick(sq: Square): void;
-  /** 보드 밖을 눌렀을 때 */
+  /** 보드 밖을 눌렀거나 Esc 를 눌렀을 때 */
   onCancel(): void;
 }
 
 const DRAG_THRESHOLD = 6;
 
+/**
+ * 체스판 뷰. 64칸은 모두 <button> 이라 스크린리더가 읽고 키보드로 다룰 수 있다.
+ * 키보드는 roving tabindex 방식: 판 전체가 Tab 한 번이고, 안에서는 방향키로 옮긴다.
+ */
 export class BoardView {
   private board: HTMLElement;
   private ranks: HTMLElement;
   private files: HTMLElement;
-  private squares = new Array<HTMLElement>(64);
+  private squares = new Array<HTMLButtonElement>(64);
   private state: BoardRenderState | null = null;
   private renderedFlipped: boolean | null = null;
   private animatedMoveKey: string | null = null;
+  /** 키보드 초점이 놓인 칸 (Tab 으로 판에 들어오면 이 칸이 받는다) */
+  private focusSq: Square = 4;
 
   private dragFrom: Square | null = null;
   private dragging = false;
@@ -52,7 +58,7 @@ export class BoardView {
     this.root.classList.add('board-wrap');
     this.root.innerHTML = `
       <div class="ranks" aria-hidden="true"></div>
-      <div class="board" role="grid" aria-label="${t('boardLabel')}"></div>
+      <div class="board" role="group" aria-label="${t('boardLabel')}"></div>
       <div class="files" aria-hidden="true"></div>
     `;
     this.ranks = this.root.querySelector('.ranks')!;
@@ -60,17 +66,18 @@ export class BoardView {
     this.board = this.root.querySelector('.board')!;
 
     for (let sq = 0; sq < 64; sq++) {
-      const el = document.createElement('div');
+      const el = document.createElement('button');
+      el.type = 'button';
       const light = (fileOf(sq) + rankOf(sq)) % 2 === 1;
       el.className = `square ${light ? 'light' : 'dark'}`;
       el.dataset.sq = String(sq);
-      el.setAttribute('role', 'gridcell');
-      el.setAttribute('aria-label', toAlgebraic(sq));
-      el.innerHTML = '<div class="piece-slot"></div><div class="dot"></div>';
+      el.tabIndex = -1;
+      el.innerHTML = '<span class="piece-slot"></span><span class="dot"></span>';
       this.squares[sq] = el;
     }
 
     this.bindPointer();
+    this.bindKeyboard();
   }
 
   private squareFromEvent(event: PointerEvent): Square | null {
@@ -80,22 +87,29 @@ export class BoardView {
     return Number(squareEl.dataset.sq);
   }
 
+  /** 칸을 눌렀을 때의 공통 동작 (포인터와 키보드가 같이 쓴다) */
+  private activate(sq: Square): boolean {
+    const state = this.state;
+    if (!state) return false;
+    const piece = state.position.board[sq];
+    if (piece && state.interactiveColor && piece.color === state.interactiveColor) {
+      this.callbacks.onPick(sq);
+      return true;
+    }
+    if (state.selected !== null) {
+      this.callbacks.onMoveAttempt(state.selected, sq);
+    }
+    return false;
+  }
+
   private bindPointer(): void {
     this.board.addEventListener('pointerdown', (event: PointerEvent) => {
       if (event.button !== 0) return;
-      const state = this.state;
-      if (!state) return;
       const target = (event.target as HTMLElement).closest<HTMLElement>('.square');
       if (!target) return;
       const sq = Number(target.dataset.sq);
-      const piece = state.position.board[sq];
-
-      if (piece && state.interactiveColor && piece.color === state.interactiveColor) {
-        this.callbacks.onPick(sq);
-        this.beginDrag(sq, event);
-      } else if (state.selected !== null) {
-        this.callbacks.onMoveAttempt(state.selected, sq);
-      }
+      this.focusSq = sq;
+      if (this.activate(sq)) this.beginDrag(sq, event);
     });
 
     window.addEventListener('pointermove', (event: PointerEvent) => {
@@ -126,6 +140,59 @@ export class BoardView {
     });
 
     window.addEventListener('pointercancel', () => this.endDrag());
+  }
+
+  private bindKeyboard(): void {
+    this.board.addEventListener('keydown', (event: KeyboardEvent) => {
+      const state = this.state;
+      if (!state) return;
+      const flipped = state.flipped;
+      let file = fileOf(this.focusSq);
+      let rank = rankOf(this.focusSq);
+      switch (event.key) {
+        case 'ArrowUp':
+          rank += flipped ? -1 : 1;
+          break;
+        case 'ArrowDown':
+          rank += flipped ? 1 : -1;
+          break;
+        case 'ArrowLeft':
+          file += flipped ? 1 : -1;
+          break;
+        case 'ArrowRight':
+          file += flipped ? -1 : 1;
+          break;
+        case 'Home':
+          file = flipped ? 7 : 0;
+          break;
+        case 'End':
+          file = flipped ? 0 : 7;
+          break;
+        case 'Enter':
+        case ' ':
+          event.preventDefault();
+          this.activate(this.focusSq);
+          return;
+        case 'Escape':
+          event.preventDefault();
+          this.callbacks.onCancel();
+          return;
+        default:
+          return;
+      }
+      event.preventDefault();
+      if (file < 0 || file > 7 || rank < 0 || rank > 7) return;
+      this.moveFocus(squareAt(file, rank));
+    });
+  }
+
+  private moveFocus(sq: Square): void {
+    const prev = this.squares[this.focusSq]!;
+    prev.tabIndex = -1;
+    this.focusSq = sq;
+    const next = this.squares[sq]!;
+    next.tabIndex = 0;
+    next.focus();
   }
 
   private beginDrag(sq: Square, event: PointerEvent): void {
@@ -173,6 +240,14 @@ export class BoardView {
     this.files.innerHTML = fileLabels.map((f) => `<span>${f}</span>`).join('');
   }
 
+  /** 스크린리더용 칸 설명: "e4, 흰색 폰, 선택됨" */
+  private squareLabel(sq: Square, piece: Piece | null, state: BoardRenderState, move: Move | undefined): string {
+    const parts = [toAlgebraic(sq), piece ? t('pieceWithColor', piece.color, piece.type) : t('squareEmpty')];
+    if (state.selected === sq) parts.push(t('squareSelected'));
+    else if (move) parts.push(move.captured || piece ? t('squareCanCapture') : t('squareCanMove'));
+    return parts.join(', ');
+  }
+
   render(state: BoardRenderState): void {
     const previous = this.state;
     this.state = state;
@@ -187,10 +262,10 @@ export class BoardView {
       const el = this.squares[sq]!;
       const piece = state.position.board[sq];
       const slot = el.firstElementChild as HTMLElement;
-      const nextHtml = piece ? pieceSvg(piece) : '';
-      if (slot.dataset.key !== `${piece?.color ?? ''}${piece?.type ?? ''}`) {
-        slot.innerHTML = nextHtml;
-        slot.dataset.key = `${piece?.color ?? ''}${piece?.type ?? ''}`;
+      const key = `${piece?.color ?? ''}${piece?.type ?? ''}`;
+      if (slot.dataset.key !== key) {
+        slot.innerHTML = piece ? pieceSvg(piece) : '';
+        slot.dataset.key = key;
       }
 
       const move = destinationSquares.get(sq);
@@ -203,9 +278,10 @@ export class BoardView {
       el.classList.toggle('hint-from', state.hint?.from === sq);
       el.classList.toggle('hint-to', state.hint?.to === sq);
       el.classList.toggle('target', targetSet.has(sq));
-      const movable =
-        state.interactiveColor !== null && piece?.color === state.interactiveColor;
+      const movable = state.interactiveColor !== null && piece?.color === state.interactiveColor;
       el.classList.toggle('movable', movable);
+      el.setAttribute('aria-label', this.squareLabel(sq, piece, state, move));
+      el.tabIndex = sq === this.focusSq ? 0 : -1;
     }
 
     this.animateLastMove(previous, state);

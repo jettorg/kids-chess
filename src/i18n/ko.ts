@@ -16,6 +16,12 @@ export const ko = {
   languageLabel: '언어',
   boardLabel: '체스판',
   close: '닫기',
+  squareEmpty: '빈 칸',
+  squareSelected: '선택됨',
+  squareCanMove: '이동 가능',
+  squareCanCapture: '잡을 수 있음',
+  pieceWithColor: (color: Color, type: PieceType) => `${COLOR[color]} ${PIECE[type]}`,
+  navLabel: '화면 선택',
 
   piece: (type: PieceType) => PIECE[type],
   color: (color: Color) => COLOR[color],

@@ -102,14 +102,18 @@ export class App {
       <div class="app" data-screen="play">
         <header class="topbar">
           <h1 class="brand js-brand"></h1>
-          <nav class="tabs" role="tablist">
+          <nav class="tabs js-tabs">
             <button type="button" data-screen="play"></button>
             <button type="button" data-screen="learn"></button>
             <button type="button" data-screen="puzzle"></button>
             <button type="button" data-screen="guide"></button>
           </nav>
           <div class="lang-toggle js-lang" role="group">
-            ${LOCALES.map((l) => `<button type="button" data-locale="${l.code}">${l.label}</button>`).join('')}
+            ${LOCALES.map(
+              (l) =>
+                `<button type="button" data-locale="${l.code}" aria-label="${l.label}">` +
+                `<span class="lang-full">${l.label}</span><span class="lang-short" aria-hidden="true">${l.code.toUpperCase()}</span></button>`,
+            ).join('')}
           </div>
           <button type="button" class="icon-btn js-sound">🔊</button>
         </header>
@@ -207,9 +211,12 @@ export class App {
     this.el.tabs.querySelectorAll<HTMLElement>('button[data-screen]').forEach((button) => {
       button.textContent = tabLabels[button.dataset.screen as Screen];
     });
+    this.el.tabs.setAttribute('aria-label', t('navLabel'));
     this.el.lang.setAttribute('aria-label', t('languageLabel'));
     this.el.lang.querySelectorAll<HTMLElement>('button[data-locale]').forEach((button) => {
-      button.classList.toggle('active', button.dataset.locale === getLocale());
+      const active = button.dataset.locale === getLocale();
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-pressed', String(active));
     });
     this.el.soundBtn.setAttribute('aria-label', t('soundToggle'));
     this.board.setLabel(t('boardLabel'));
@@ -670,7 +677,10 @@ export class App {
   private render(): void {
     this.el.app.dataset.screen = this.screen;
     this.el.tabs.querySelectorAll<HTMLElement>('button[data-screen]').forEach((button) => {
-      button.classList.toggle('active', button.dataset.screen === this.screen);
+      const active = button.dataset.screen === this.screen;
+      button.classList.toggle('active', active);
+      if (active) button.setAttribute('aria-current', 'page');
+      else button.removeAttribute('aria-current');
     });
     this.el.app.classList.toggle('with-coords', this.settings.coords);
     this.el.soundBtn.textContent = isSoundEnabled() ? '🔊' : '🔈';

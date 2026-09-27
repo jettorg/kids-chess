@@ -5,7 +5,7 @@
   --ink-soft: #7a6152;
   --card: #fffdf8;
   --line: #e6d4bd;
-  --accent: #e07a3f;
+  --accent: #b5541c;      /* 흰 글씨와 대비 4.9:1 (WCAG AA) */
   --accent-ink: #fff;
   --light-square: #f2dcbc;
   --dark-square: #b5825a;
@@ -161,6 +161,7 @@ ul { margin: 0; padding-left: 20px; line-height: 1.7; }
 }
 
 .lang-toggle button.active { background: var(--bg-2); color: var(--ink); }
+.lang-toggle .lang-short { display: none; }
 
 /* ───────── 전체 배치 ───────── */
 .layout {
@@ -263,7 +264,27 @@ ul { margin: 0; padding-left: 20px; line-height: 1.7; }
   -webkit-user-select: none;
 }
 
-.square { position: relative; }
+.square {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  font: inherit;
+  color: inherit;
+  -webkit-appearance: none;
+  appearance: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.square:focus { outline: none; }
+.square:focus-visible {
+  outline: 4px solid #1d6fd6;
+  outline-offset: -4px;
+  z-index: 3;
+}
 .square.light { background: var(--light-square); }
 .square.dark { background: var(--dark-square); }
 .square.movable { cursor: grab; }
@@ -538,4 +559,6 @@ ul { margin: 0; padding-left: 20px; line-height: 1.7; }
   .icon-btn { position: absolute; top: 10px; right: clamp(12px, 3vw, 28px); }
   .lang-toggle { position: absolute; top: 12px; left: var(--pad-x); }
   .lang-toggle button { min-height: 40px; padding: 0 10px; }
+  .lang-toggle .lang-full { display: none; }
+  .lang-toggle .lang-short { display: inline; }
 }
