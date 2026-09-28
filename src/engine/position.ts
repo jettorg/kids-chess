@@ -1,4 +1,5 @@
 import type { CastlingRights, Color, Piece, PieceType, Position, Square } from './types';
+import { computeHash } from './zobrist';
 
 export const FILES = 'abcdefgh';
 
@@ -47,6 +48,8 @@ export function clonePosition(pos: Position): Position {
     ep: pos.ep,
     halfmove: pos.halfmove,
     fullmove: pos.fullmove,
+    hashLo: pos.hashLo,
+    hashHi: pos.hashHi,
   };
 }
 
@@ -113,7 +116,11 @@ export function parseFen(fen: string): Position {
   const halfmove = Number(parts[4] ?? 0) || 0;
   const fullmove = Number(parts[5] ?? 1) || 1;
 
-  return { board, turn, castling, ep, halfmove, fullmove };
+  const pos: Position = { board, turn, castling, ep, halfmove, fullmove, hashLo: 0, hashHi: 0 };
+  const hash = computeHash(pos);
+  pos.hashLo = hash.lo;
+  pos.hashHi = hash.hi;
+  return pos;
 }
 
 export function toFen(pos: Position): string {

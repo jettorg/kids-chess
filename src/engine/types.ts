@@ -33,6 +33,10 @@ export interface Position {
   /** 50수 규칙용 반수 카운터 */
   halfmove: number;
   fullmove: number;
+  /** Zobrist 해시 (하위 32비트) — makeMove/unmakeMove 가 증분 갱신한다 */
+  hashLo: number;
+  /** Zobrist 해시 (상위 32비트) */
+  hashHi: number;
 }
 
 export interface Move {

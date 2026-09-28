@@ -1,5 +1,6 @@
 import type { Color, GameStatus, Move, PieceType, Position, Square } from './types';
 import { clonePosition, initialPosition, positionKey, toFen } from './position';
+import { computeHash } from './zobrist';
 import { applyMove, findMove, generateLegalMoves, isInCheck } from './moves';
 import { gameStatus } from './status';
 import { toSan } from './san';
@@ -92,7 +93,10 @@ export class Game {
     const san = toSan(before, move);
     let after = applyMove(before, move);
     if (this.options.singleSide) {
-      after = { ...after, turn: this.options.singleSide, ep: after.ep };
+      after = { ...after, turn: this.options.singleSide };
+      const hash = computeHash(after);
+      after.hashLo = hash.lo;
+      after.hashHi = hash.hi;
     }
     this.positions.push(after);
     this.history.push(move);

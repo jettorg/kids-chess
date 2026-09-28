@@ -4,3 +4,4 @@ export * from './moves';
 export * from './status';
 export * from './san';
 export * from './game';
+export * from './zobrist';

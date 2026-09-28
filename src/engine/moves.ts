@@ -1,4 +1,4 @@
-import type { Color, Move, Piece, PieceType, Position, Square } from './types';
+import type { CastlingRights, Color, Move, Piece, PieceType, Position, Square } from './types';
 import {
   clonePosition,
   fileOf,
@@ -8,6 +8,16 @@ import {
   rankOf,
   squareAt,
 } from './position';
+import {
+  SIDE_HASH_HI,
+  SIDE_HASH_LO,
+  castleHashHi,
+  castleHashLo,
+  epHashHi,
+  epHashLo,
+  pieceHashHi,
+  pieceHashLo,
+} from './zobrist';
 
 type Delta = readonly [number, number];
 
@@ -286,70 +296,148 @@ export function generatePseudoMoves(pos: Position, color: Color = pos.turn, from
   return out;
 }
 
-/** 실제로 둘 수 있는 수 (킹이 잡히는 수를 제외) */
+/**
+ * 실제로 둘 수 있는 수 (킹이 잡히는 수를 제외).
+ * 후보마다 배치를 복사하지 않고, 한 번 복사한 배치에서 두었다 되돌리며 검사한다.
+ */
 export function generateLegalMoves(pos: Position, from?: Square): Move[] {
   const color = pos.turn;
-  return generatePseudoMoves(pos, color, from).filter((move) => {
-    const next = applyMove(pos, move);
-    return !isInCheck(next, color);
-  });
+  const scratch = clonePosition(pos);
+  const out: Move[] = [];
+  for (const move of generatePseudoMoves(pos, color, from)) {
+    const undo = makeMove(scratch, move);
+    if (!isInCheck(scratch, color)) out.push(move);
+    unmakeMove(scratch, move, undo);
+  }
+  return out;
 }
 
-function clearCastlingForSquare(pos: Position, sq: Square): void {
-  if (sq === 0) pos.castling.wq = false;
-  else if (sq === 7) pos.castling.wk = false;
-  else if (sq === 56) pos.castling.bq = false;
-  else if (sq === 63) pos.castling.bk = false;
+function clearCastlingForSquare(castling: CastlingRights, sq: Square): void {
+  if (sq === 0) castling.wq = false;
+  else if (sq === 7) castling.wk = false;
+  else if (sq === 56) castling.bq = false;
+  else if (sq === 63) castling.bk = false;
+}
+
+/** unmakeMove 가 배치를 되돌리는 데 필요한 정보 */
+export interface Undo {
+  moved: Piece;
+  captured: Piece | null;
+  capturedSq: Square;
+  castling: CastlingRights;
+  ep: Square | null;
+  halfmove: number;
+  fullmove: number;
+  hashLo: number;
+  hashHi: number;
+}
+
+/**
+ * 수를 배치에 직접 적용한다 (원본이 바뀜). 탐색처럼 수를 많이 둘 때 복사 비용을 없앤다.
+ * Zobrist 해시를 증분으로 갱신한다. 되돌리려면 unmakeMove 에 반환값을 넘긴다.
+ */
+export function makeMove(pos: Position, move: Move): Undo {
+  const board = pos.board;
+  const moved = board[move.from];
+  if (!moved) throw new Error(`출발 칸이 비어 있습니다: ${move.from}`);
+  const color = moved.color;
+
+  const undo: Undo = {
+    moved,
+    captured: null,
+    capturedSq: move.to,
+    castling: { ...pos.castling },
+    ep: pos.ep,
+    halfmove: pos.halfmove,
+    fullmove: pos.fullmove,
+    hashLo: pos.hashLo,
+    hashHi: pos.hashHi,
+  };
+
+  let lo = pos.hashLo ^ castleHashLo(pos.castling) ^ epHashLo(pos.ep) ^ SIDE_HASH_LO;
+  let hi = pos.hashHi ^ castleHashHi(pos.castling) ^ epHashHi(pos.ep) ^ SIDE_HASH_HI;
+
+  // 잡기 (앙파상은 도착 칸이 아니라 지나간 폰의 칸)
+  const capturedSq = move.enPassant ? squareAt(fileOf(move.to), rankOf(move.from)) : move.to;
+  const captured = board[capturedSq];
+  if (captured) {
+    undo.captured = captured;
+    undo.capturedSq = capturedSq;
+    board[capturedSq] = null;
+    lo ^= pieceHashLo(captured, capturedSq);
+    hi ^= pieceHashHi(captured, capturedSq);
+  }
+
+  // 말 옮기기 (승격이면 새 말)
+  board[move.from] = null;
+  lo ^= pieceHashLo(moved, move.from);
+  hi ^= pieceHashHi(moved, move.from);
+  const placed: Piece = move.promotion ? { type: move.promotion, color } : moved;
+  board[move.to] = placed;
+  lo ^= pieceHashLo(placed, move.to);
+  hi ^= pieceHashHi(placed, move.to);
+
+  // 캐슬링이면 룩도 옮긴다: 킹사이드는 킹의 왼쪽, 퀸사이드는 킹의 오른쪽에 놓인다.
+  if (move.castle) {
+    const spec = CASTLE_SPECS[color].find((s) => s.side === move.castle)!;
+    const rook = board[spec.rook]!;
+    const rookTarget = move.castle === 'k' ? move.to - 1 : move.to + 1;
+    board[spec.rook] = null;
+    board[rookTarget] = rook;
+    lo ^= pieceHashLo(rook, spec.rook) ^ pieceHashLo(rook, rookTarget);
+    hi ^= pieceHashHi(rook, spec.rook) ^ pieceHashHi(rook, rookTarget);
+  }
+
+  // 캐슬링 권리 갱신
+  if (moved.type === 'k') {
+    if (color === 'w') {
+      pos.castling.wk = false;
+      pos.castling.wq = false;
+    } else {
+      pos.castling.bk = false;
+      pos.castling.bq = false;
+    }
+  }
+  clearCastlingForSquare(pos.castling, move.from);
+  clearCastlingForSquare(pos.castling, move.to);
+
+  // 앙파상 대상 칸, 50수 규칙, 수 번호, 차례
+  pos.ep = move.doublePawn ? squareAt(fileOf(move.from), (rankOf(move.from) + rankOf(move.to)) / 2) : null;
+  pos.halfmove = move.piece === 'p' || captured ? 0 : pos.halfmove + 1;
+  if (color === 'b') pos.fullmove += 1;
+  pos.turn = opposite(color);
+
+  pos.hashLo = lo ^ castleHashLo(pos.castling) ^ epHashLo(pos.ep);
+  pos.hashHi = hi ^ castleHashHi(pos.castling) ^ epHashHi(pos.ep);
+  return undo;
+}
+
+/** makeMove 를 되돌린다. */
+export function unmakeMove(pos: Position, move: Move, undo: Undo): void {
+  const board = pos.board;
+  const color = undo.moved.color;
+  board[move.from] = undo.moved;
+  board[move.to] = null;
+  if (undo.captured) board[undo.capturedSq] = undo.captured;
+  if (move.castle) {
+    const spec = CASTLE_SPECS[color].find((s) => s.side === move.castle)!;
+    const rookTarget = move.castle === 'k' ? move.to - 1 : move.to + 1;
+    board[spec.rook] = board[rookTarget];
+    board[rookTarget] = null;
+  }
+  pos.castling = undo.castling;
+  pos.ep = undo.ep;
+  pos.halfmove = undo.halfmove;
+  pos.fullmove = undo.fullmove;
+  pos.turn = color;
+  pos.hashLo = undo.hashLo;
+  pos.hashHi = undo.hashHi;
 }
 
 /** 수를 적용한 새 Position 을 반환한다 (원본은 바뀌지 않음). */
 export function applyMove(pos: Position, move: Move): Position {
   const next = clonePosition(pos);
-  const board = next.board;
-  const moving = board[move.from];
-  if (!moving) throw new Error(`출발 칸이 비어 있습니다: ${move.from}`);
-
-  board[move.from] = null;
-
-  if (move.enPassant) {
-    const capturedSquare = squareAt(fileOf(move.to), rankOf(move.from));
-    board[capturedSquare] = null;
-  }
-
-  board[move.to] = move.promotion
-    ? { type: move.promotion, color: moving.color }
-    : moving;
-
-  if (move.castle) {
-    const spec = CASTLE_SPECS[moving.color].find((s) => s.side === move.castle)!;
-    const rook = board[spec.rook];
-    board[spec.rook] = null;
-    // 킹사이드는 킹의 왼쪽, 퀸사이드는 킹의 오른쪽에 룩이 놓인다.
-    const rookTarget = move.castle === 'k' ? move.to - 1 : move.to + 1;
-    board[rookTarget] = rook;
-  }
-
-  // 캐슬링 권리 갱신
-  if (moving.type === 'k') {
-    if (moving.color === 'w') {
-      next.castling.wk = false;
-      next.castling.wq = false;
-    } else {
-      next.castling.bk = false;
-      next.castling.bq = false;
-    }
-  }
-  clearCastlingForSquare(next, move.from);
-  clearCastlingForSquare(next, move.to);
-
-  // 앙파상 대상 칸
-  next.ep = move.doublePawn ? squareAt(fileOf(move.from), (rankOf(move.from) + rankOf(move.to)) / 2) : null;
-
-  // 50수 규칙
-  next.halfmove = move.piece === 'p' || move.captured ? 0 : pos.halfmove + 1;
-  if (moving.color === 'b') next.fullmove = pos.fullmove + 1;
-  next.turn = opposite(moving.color);
-
+  makeMove(next, move);
   return next;
 }
 
