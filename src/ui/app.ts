@@ -70,6 +70,7 @@ export class App implements PanelHost {
     guide: HTMLElement;
     promo: HTMLElement;
     banner: HTMLElement;
+    toast: HTMLElement;
   };
 
   constructor(root: HTMLElement) {
@@ -108,6 +109,7 @@ export class App implements PanelHost {
         </main>
         <div class="overlay js-promo hidden"></div>
         <div class="overlay js-banner hidden"></div>
+        <div class="toast js-toast hidden" role="status"></div>
       </div>
     `;
 
@@ -126,6 +128,7 @@ export class App implements PanelHost {
       guide: q('.js-guide'),
       promo: q('.js-promo'),
       banner: q('.js-banner'),
+      toast: q('.js-toast'),
     };
 
     this.board = new BoardView(this.el.boardHost, {
@@ -215,6 +218,25 @@ export class App implements PanelHost {
 
   saveSettings(): void {
     save(SETTINGS_KEY, this.settings);
+  }
+
+  /** 새 버전이 준비됐을 때 (main.ts 의 서비스 워커 감시가 부른다) */
+  notifyUpdate(): void {
+    const toast = this.el.toast;
+    toast.classList.remove('hidden');
+    toast.innerHTML = `<span>${t('updateAvailable')}</span>`;
+    const reload = document.createElement('button');
+    reload.type = 'button';
+    reload.className = 'chip';
+    reload.textContent = t('reloadNow');
+    reload.addEventListener('click', () => location.reload());
+    toast.appendChild(reload);
+    const later = document.createElement('button');
+    later.type = 'button';
+    later.className = 'ghost';
+    later.textContent = t('later');
+    later.addEventListener('click', () => toast.classList.add('hidden'));
+    toast.appendChild(later);
   }
 
   // ───────────────────────── 게임 생성 ─────────────────────────
@@ -321,15 +343,24 @@ export class App implements PanelHost {
       this.pendingPromotion = { from, to };
       this.selected = null;
       this.render();
-      showPromotionDialog(this.el.promo, this.game.turn, (promotion: PieceType) => {
-        const pending = this.pendingPromotion;
-        this.pendingPromotion = null;
-        const move = pending
-          ? this.game.legalMoves(pending.from).find((m) => m.to === pending.to && m.promotion === promotion)
-          : undefined;
-        if (move) this.commitMove(move);
-        else this.render();
-      });
+      showPromotionDialog(
+        this.el.promo,
+        this.game.turn,
+        (promotion: PieceType) => {
+          const pending = this.pendingPromotion;
+          this.pendingPromotion = null;
+          const move = pending
+            ? this.game.legalMoves(pending.from).find((m) => m.to === pending.to && m.promotion === promotion)
+            : undefined;
+          if (move) this.commitMove(move);
+          else this.render();
+        },
+        () => {
+          // Esc 로 취소: 폰은 제자리에 남고 다시 고를 수 있다.
+          this.pendingPromotion = null;
+          this.render();
+        },
+      );
       return;
     }
 

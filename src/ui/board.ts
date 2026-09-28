@@ -2,6 +2,7 @@ import type { Color, Move, Piece, Position, Square } from '../engine/types';
 import { FILES, fileOf, rankOf, squareAt, toAlgebraic } from '../engine/position';
 import { pieceSvg } from './pieces';
 import { t } from '../i18n';
+import { prefersReducedMotion } from './focus';
 
 export interface BoardRenderState {
   position: Position;
@@ -294,6 +295,7 @@ export class BoardView {
       this.animatedMoveKey = null;
       return;
     }
+    if (prefersReducedMotion()) return;
     const key = `${state.position.halfmove}:${state.position.fullmove}:${move.from}-${move.to}-${move.promotion ?? ''}`;
     if (key === this.animatedMoveKey) return;
     this.animatedMoveKey = key;

@@ -39,3 +39,65 @@ test.describe('접근성', () => {
     await expect(page.locator(sq('e4'))).toHaveAttribute('aria-label', 'e4, 빈 칸, 이동 가능');
   });
 });
+
+test.describe('대화상자 초점', () => {
+  test('결과 창이 열리면 초점이 안으로 들어오고 Tab 이 밖으로 나가지 않는다', async ({ page }) => {
+    await fresh(page);
+    await page.getByRole('button', { name: /둘이서/ }).click();
+    for (const [f, t] of [['e2', 'e4'], ['e7', 'e5'], ['f1', 'c4'], ['b8', 'c6'], ['d1', 'h5'], ['g8', 'f6'], ['h5', 'f7']]) {
+      await page.click(sq(f!));
+      await page.click(sq(t!));
+    }
+    await expect(page.locator('.js-banner [role="dialog"]')).toBeVisible();
+    await expect(page.locator(':focus')).toHaveText(/한 판 더/);
+    for (let i = 0; i < 4; i++) {
+      await page.keyboard.press('Tab');
+      const inside = await page.evaluate(() => document.querySelector('.js-banner')!.contains(document.activeElement));
+      expect(inside, `Tab ${i + 1}`).toBe(true);
+    }
+    await page.keyboard.press('Shift+Tab');
+    expect(await page.evaluate(() => document.querySelector('.js-banner')!.contains(document.activeElement))).toBe(true);
+    await page.keyboard.press('Escape');
+    await expect(page.locator('.js-banner')).toHaveClass(/hidden/);
+  });
+
+  test('승격 창은 Tab 을 가두고 Esc 로 취소할 수 있다', async ({ page }) => {
+    await fresh(page);
+    await page.evaluate(() => {
+      localStorage.setItem('kids-chess.settings.v1', JSON.stringify({ sound: false, coords: true, opponent: 'human', playerColor: 'w', flipped: false }));
+      localStorage.setItem('kids-chess.game.v1', JSON.stringify({ start: '4k3/P7/8/8/8/8/8/4K3 w - - 0 1', moves: [] }));
+    });
+    await page.reload();
+    await page.waitForSelector('.board .square');
+    await page.click(sq('a7'));
+    await page.click(sq('a8'));
+    await expect(page.locator('.promo-card[role="dialog"]')).toBeVisible();
+    await expect(page.locator(':focus')).toHaveAttribute('data-promo', 'q');
+    for (let i = 0; i < 5; i++) await page.keyboard.press('Tab');
+    expect(await page.evaluate(() => document.querySelector('.js-promo')!.contains(document.activeElement))).toBe(true);
+    await page.keyboard.press('Escape');
+    await expect(page.locator('.js-promo')).toHaveClass(/hidden/);
+    await expect(page.locator(sq('a7') + ' .piece')).toHaveCount(1);
+    await expect(page.locator('.js-notation')).toHaveText('아직 둔 수가 없어요.');
+    // 다시 시도하면 고를 수 있다 (초점이 창 안으로 옮겨진 뒤 Enter)
+    await page.click(sq('a7'));
+    await page.click(sq('a8'));
+    await expect(page.locator(':focus')).toHaveAttribute('data-promo', 'q');
+    await page.keyboard.press('Enter');
+    await expect(page.locator('.js-notation')).toContainText('a8=Q');
+  });
+});
+
+test.describe('움직임 줄이기', () => {
+  test.use({ reducedMotion: 'reduce' });
+  test('설정이 켜져 있으면 승리 색종이를 띄우지 않는다', async ({ page }) => {
+    await fresh(page);
+    await page.getByRole('button', { name: /둘이서/ }).click();
+    for (const [f, t] of [['e2', 'e4'], ['e7', 'e5'], ['f1', 'c4'], ['b8', 'c6'], ['d1', 'h5'], ['g8', 'f6'], ['h5', 'f7']]) {
+      await page.click(sq(f!));
+      await page.click(sq(t!));
+    }
+    await expect(page.locator('.js-banner h2')).toHaveText('체크메이트! 🎉');
+    await expect(page.locator('.confetti')).toHaveCount(0);
+  });
+});
