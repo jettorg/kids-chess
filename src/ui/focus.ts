@@ -13,20 +13,18 @@ export function trapFocus(container: HTMLElement, initial?: HTMLElement | null):
   const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   const focusables = () => Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE));
 
+  // Tab 이동을 브라우저에 맡기지 않고 직접 한다. 사파리는 기본 설정에서 Tab 으로 버튼을
+  // 건너뛰므로, 맡기면 초점이 창 밖으로 새어 나간다.
   const onKeydown = (event: KeyboardEvent) => {
     if (event.key !== 'Tab') return;
     const items = focusables();
     if (items.length === 0) return;
-    const first = items[0]!;
-    const last = items[items.length - 1]!;
-    const active = document.activeElement;
-    if (event.shiftKey && (active === first || !container.contains(active))) {
-      event.preventDefault();
-      last.focus();
-    } else if (!event.shiftKey && (active === last || !container.contains(active))) {
-      event.preventDefault();
-      first.focus();
-    }
+    event.preventDefault();
+    const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const index = active ? items.indexOf(active) : -1;
+    const step = event.shiftKey ? -1 : 1;
+    const next = index < 0 ? (event.shiftKey ? items.length - 1 : 0) : (index + step + items.length) % items.length;
+    items[next]!.focus();
   };
 
   document.addEventListener('keydown', onKeydown, true);

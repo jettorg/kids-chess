@@ -39,8 +39,8 @@ jobs:
       - name: 빌드
         run: npm run build
 
-      - name: 브라우저 준비 (Playwright Chromium)
-        run: npx playwright install --with-deps chromium
+      - name: 브라우저 준비 (Playwright Chromium + WebKit)
+        run: npx playwright install --with-deps chromium webkit
 
       - name: 브라우저 E2E 테스트 (배포 형태 그대로)
         run: npx playwright test
