@@ -21,6 +21,7 @@ export interface PanelHost {
   readonly puzzleIndex: number;
   readonly puzzleTheme: PuzzleTheme | 'all';
   readonly puzzleBusy: boolean;
+  readonly lessonBusy: boolean;
   visiblePuzzles(): number[];
   setPuzzleTheme(theme: PuzzleTheme | 'all'): void;
   recommendedPuzzleIndex(): number;
@@ -167,16 +168,18 @@ export function renderLearnPanel(host: PanelHost, panel: HTMLElement): void {
   const controls = panel.querySelector<HTMLElement>('.js-lesson-controls')!;
   controls.appendChild(button(t('restart'), () => host.startLesson(host.lessonIndex), 'chip'));
   const undoButton = button(t('undo'), () => host.undo(), 'chip');
-  undoButton.disabled = host.game.moveCount === 0;
+  undoButton.disabled = host.game.moveCount === 0 || host.lessonBusy;
   controls.appendChild(undoButton);
-  controls.appendChild(button(t('help'), () => host.showHint(), 'chip'));
+  const helpButton = button(t('help'), () => host.showHint(), 'chip');
+  helpButton.disabled = host.lessonBusy;
+  controls.appendChild(helpButton);
 
   const list = panel.querySelector<HTMLElement>('.js-lesson-list')!;
   LESSONS.forEach((item, index) => {
     const done = host.progress.lessons.includes(item.id);
     list.appendChild(
       button(
-        `${done ? '✅ ' : ''}${t('piece', item.piece)}`,
+        `${done ? '✅ ' : ''}${L(item.short)}`,
         () => host.startLesson(index),
         index === host.lessonIndex ? 'chip active' : 'chip',
       ),

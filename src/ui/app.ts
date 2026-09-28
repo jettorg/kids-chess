@@ -1,8 +1,8 @@
 import type { Color, Move, PieceType, Square } from '../engine/types';
-import { Game, findKing, initialPosition, parseFen } from '../engine';
+import { Game, findKing, initialPosition, isInCheck, parseFen } from '../engine';
 import { AiClient } from '../ai/client';
 import type { MoveRef } from '../ai/worker';
-import { LESSONS } from '../data/lessons';
+import { LESSONS, type Lesson } from '../data/lessons';
 import { PUZZLES, puzzleRating, type PuzzleTheme } from '../data/puzzles';
 import { fromAlgebraic, toAlgebraic } from '../engine/position';
 import { L, LOCALES, getLocale, setLocale, t, type Locale } from '../i18n';
@@ -46,6 +46,10 @@ export class App implements PanelHost {
   puzzleTheme: PuzzleTheme | 'all' = 'all';
   /** 상대 응수를 자동으로 두는 중 */
   puzzleBusy = false;
+  /** 레슨에서 대본 상대가 두는 중 */
+  lessonBusy = false;
+  /** 레슨에서 내가 둔 수의 개수 (대본 상대의 몇 번째 수를 둘지) */
+  private lessonStep = 0;
 
   private screen: Screen = 'play';
   private board: BoardView;
@@ -290,12 +294,67 @@ export class App implements PanelHost {
     this.cancelThinking();
     this.lessonIndex = Math.max(0, Math.min(index, LESSONS.length - 1));
     const lesson = LESSONS[this.lessonIndex]!;
-    this.game = new Game(parseFen(lesson.fen), { singleSide: 'w' });
+    // 여러 수가 필요한 연습(말 잡기, 길 찾기)은 상대가 움직이지 않는 연습판으로,
+    // 한 수로 끝나는 규칙 레슨과 대본 상대가 있는 레슨은 보통 게임으로 연다.
+    // (연습판은 차례를 항상 흰색으로 되돌리므로 체크메이트 판정이 되지 않는다.)
+    const practice = !lesson.opponentMoves && (lesson.goal.kind === 'capture-all' || lesson.goal.kind === 'reach');
+    this.game = new Game(parseFen(lesson.fen), { singleSide: practice ? 'w' : null });
     this.selected = null;
     this.hint = null;
     this.message = null;
+    this.lessonBusy = false;
+    this.lessonStep = 0;
     this.banner.hide();
     this.render();
+  }
+
+  /** 레슨 목표를 이루는 수가 있으면 그 수 (도움말용) */
+  private lessonGoalMove(lesson: Lesson): Move | null {
+    const moves = this.game.legalMoves();
+    switch (lesson.goal.kind) {
+      case 'capture-all':
+        return moves.find((m) => m.captured) ?? moves[0] ?? null;
+      case 'castle':
+        return moves.find((m) => m.castle) ?? null;
+      case 'promote':
+        return moves.find((m) => m.promotion === 'q') ?? moves.find((m) => m.promotion) ?? null;
+      case 'en-passant':
+        return moves.find((m) => m.enPassant) ?? null;
+      case 'escape-check':
+        return moves[0] ?? null;
+      case 'checkmate':
+        return (
+          moves.find((m) => {
+            const g = new Game(this.game.position);
+            g.playMove(m);
+            return g.status().kind === 'checkmate';
+          }) ?? null
+        );
+      case 'reach': {
+        const target = fromAlgebraic(lesson.goal.square);
+        return moves.find((m) => m.to === target) ?? moves[0] ?? null;
+      }
+    }
+  }
+
+  /** 아이의 수로 레슨 목표가 이루어졌는가 */
+  private lessonGoalReached(lesson: Lesson, move: Move): boolean {
+    switch (lesson.goal.kind) {
+      case 'capture-all':
+        return this.remainingTargets().length === 0;
+      case 'castle':
+        return Boolean(move.castle);
+      case 'promote':
+        return Boolean(move.promotion);
+      case 'en-passant':
+        return Boolean(move.enPassant);
+      case 'escape-check':
+        return !isInCheck(this.game.position, 'w');
+      case 'checkmate':
+        return this.game.status().kind === 'checkmate';
+      case 'reach':
+        return this.game.position.board[fromAlgebraic(lesson.goal.square)]?.color === 'w';
+    }
   }
 
   startPuzzle(index: number): void {
@@ -361,7 +420,7 @@ export class App implements PanelHost {
   interactiveColor(): Color | null {
     if (this.thinking || this.pendingPromotion) return null;
     if (this.screen === 'guide') return null;
-    if (this.screen === 'learn') return 'w';
+    if (this.screen === 'learn') return this.lessonBusy ? null : 'w';
     if (this.screen === 'puzzle') return this.puzzleSolved || this.puzzleBusy ? null : PUZZLES[this.puzzleIndex]!.side;
     if (this.game.status().kind !== 'playing') return null;
     if (this.settings.opponent === 'human') return this.game.turn;
@@ -437,7 +496,7 @@ export class App implements PanelHost {
 
   private afterMove(move: Move): void {
     if (this.screen === 'learn') {
-      this.checkLessonDone();
+      this.checkLessonDone(move);
       return;
     }
     if (this.screen === 'puzzle') {
@@ -543,8 +602,8 @@ export class App implements PanelHost {
   showHint(): void {
     if (this.interactiveColor() === null || this.hintPending) return;
     if (this.screen === 'learn') {
-      // 연습 모드는 탐색 없이 잡는 수를 바로 알려준다.
-      const move = this.game.legalMoves().find((m) => m.captured) ?? this.game.legalMoves()[0] ?? null;
+      // 연습 모드는 탐색 없이 목표를 이루는 수를 바로 알려준다.
+      const move = this.lessonGoalMove(LESSONS[this.lessonIndex]!);
       if (move) this.presentHint(move);
       return;
     }
@@ -613,15 +672,36 @@ export class App implements PanelHost {
     return out;
   }
 
-  private checkLessonDone(): void {
-    if (this.remainingTargets().length > 0) {
+  private checkLessonDone(move: Move): void {
+    const lesson = LESSONS[this.lessonIndex]!;
+    this.lessonStep++;
+    if (!this.lessonGoalReached(lesson, move)) {
+      const scripted = lesson.opponentMoves?.[this.lessonStep - 1];
+      if (scripted && this.game.turn === 'b') {
+        // 대본 상대가 잠시 뒤 응수한다.
+        this.lessonBusy = true;
+        this.render();
+        const generation = this.aiGeneration;
+        setTimeout(() => {
+          if (generation !== this.aiGeneration || this.screen !== 'learn') return;
+          const reply = this.game
+            .legalMoves(fromAlgebraic(scripted.slice(0, 2)))
+            .find((m) => m.to === fromAlgebraic(scripted.slice(2, 4)));
+          if (reply) {
+            this.game.playMove(reply);
+            play(reply.captured ? 'capture' : 'move');
+          }
+          this.lessonBusy = false;
+          this.render();
+        }, 550);
+        return;
+      }
       if (this.game.legalMoves().length === 0) {
         this.message = 'learnStuck';
         this.render();
       }
       return;
     }
-    const lesson = LESSONS[this.lessonIndex]!;
     if (!this.progress.lessons.includes(lesson.id)) {
       this.progress.lessons.push(lesson.id);
       save(PROGRESS_KEY, this.progress);
@@ -629,7 +709,7 @@ export class App implements PanelHost {
     play('win');
     const isLast = this.lessonIndex >= LESSONS.length - 1;
     this.banner.show(
-      t('lessonDoneTitle'),
+      lesson.goal.kind === 'capture-all' ? t('lessonDoneTitle') : t('lessonDoneGeneric'),
       t('lessonDoneDetail', L(lesson.title)),
       isLast
         ? [{ label: t('goPuzzles'), action: () => this.setScreen('puzzle') }]
@@ -712,8 +792,25 @@ export class App implements PanelHost {
     if (this.message) return t(this.message);
     if (this.screen === 'learn') {
       const lesson = LESSONS[this.lessonIndex]!;
-      const left = this.remainingTargets().length;
-      return left === 0 ? t('learnDoneStatus', L(lesson.title)) : t('learnStatus', lesson.piece, left);
+      if (this.lessonBusy) return t('puzzleGood');
+      switch (lesson.goal.kind) {
+        case 'capture-all': {
+          const left = this.remainingTargets().length;
+          return left === 0 ? t('learnDoneStatus', L(lesson.title)) : t('learnStatus', lesson.piece!, left);
+        }
+        case 'reach':
+          return t('lessonGoalReach', lesson.goal.square);
+        case 'checkmate':
+          return t('lessonGoalCheckmate');
+        case 'escape-check':
+          return t('lessonGoalEscape');
+        case 'castle':
+          return t('lessonGoalCastle');
+        case 'promote':
+          return t('lessonGoalPromote');
+        case 'en-passant':
+          return t('lessonGoalEnPassant');
+      }
     }
     if (this.screen === 'puzzle') {
       if (this.puzzleSolved) return t('puzzleSolvedStatus');
@@ -746,9 +843,17 @@ export class App implements PanelHost {
 
     const status = this.game.status();
     const checkSquare =
-      this.screen !== 'learn' && (status.kind === 'checkmate' || (status.kind === 'playing' && status.check))
+      status.kind === 'checkmate' || (status.kind === 'playing' && status.check)
         ? findKing(this.game.position, this.game.turn)
         : null;
+    const lesson = this.screen === 'learn' ? LESSONS[this.lessonIndex]! : null;
+    const targets = !lesson
+      ? []
+      : lesson.goal.kind === 'capture-all'
+        ? this.remainingTargets()
+        : lesson.goal.kind === 'reach'
+          ? [fromAlgebraic(lesson.goal.square)]
+          : [];
 
     // 퍼즐은 푸는 쪽이 아래로 오도록 판을 돌린다 (설정의 뒤집기와 별개)
     const flipped = this.screen === 'puzzle' ? PUZZLES[this.puzzleIndex]!.side === 'b' : this.settings.flipped;
@@ -760,7 +865,7 @@ export class App implements PanelHost {
       lastMove: this.game.lastMove,
       checkSquare,
       hint: this.hint,
-      targets: this.screen === 'learn' ? this.remainingTargets() : [],
+      targets,
       interactiveColor: this.interactiveColor(),
       showCoords: this.settings.coords,
     });

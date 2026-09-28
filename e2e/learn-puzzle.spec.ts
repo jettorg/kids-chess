@@ -94,3 +94,65 @@ test.describe('여러 종류의 퍼즐', () => {
     await expect(page.locator('.panel h2').first()).toContainText('13.');
   });
 });
+
+test.describe('규칙 레슨', () => {
+  async function openLesson(page: import('@playwright/test').Page, label: string) {
+    await fresh(page);
+    await page.getByRole('button', { name: '배우기' }).click();
+    await page.locator('.js-lesson-list button', { hasText: label }).click();
+    await page.waitForTimeout(150);
+  }
+
+  test('체크 피하기: 킹이 빨갛게 표시되고 벗어나면 완료', async ({ page }) => {
+    await openLesson(page, '체크 피하기');
+    await expect(status(page)).toContainText('체크예요');
+    await expect(page.locator('.board .square.check')).toHaveCount(1);
+    await move(page, 'e1', 'd1');
+    await expect(page.locator('.js-banner h2')).toHaveText('해냈어요! 🎉');
+  });
+
+  test('캐슬링: 킹이 두 칸 가면 룩이 따라온다', async ({ page }) => {
+    await openLesson(page, '캐슬링');
+    await page.click(sq('e1'));
+    await expect(page.locator(sq('g1'))).toHaveClass(/dest/);
+    await page.click(sq('g1'));
+    await expect(page.locator(sq('f1') + ' .piece')).toHaveCount(1);
+    await expect(page.locator('.js-banner h2')).toHaveText('해냈어요! 🎉');
+  });
+
+  test('승격: 폰이 끝까지 가면 고르는 창이 뜨고 완료', async ({ page }) => {
+    await openLesson(page, '승격');
+    await move(page, 'b7', 'b8');
+    await expect(page.locator('.promo-card')).toBeVisible();
+    await page.locator('button[data-promo="q"]').click();
+    await expect(page.locator('.js-banner h2')).toHaveText('해냈어요! 🎉');
+  });
+
+  test('앙파상: 지나간 폰을 대각선으로 잡는다', async ({ page }) => {
+    await openLesson(page, '앙파상');
+    await page.click(sq('e5'));
+    await expect(page.locator(sq('d6'))).toHaveClass(/dest/);
+    await page.click(sq('d6'));
+    await expect(page.locator(sq('d5') + ' .piece')).toHaveCount(0);
+    await expect(page.locator('.js-banner h2')).toHaveText('해냈어요! 🎉');
+  });
+
+  test('체크메이트 레슨과 도움말', async ({ page }) => {
+    await openLesson(page, '체크메이트');
+    await page.getByRole('button', { name: /도움말/ }).click();
+    await expect(page.locator(sq('e8'))).toHaveClass(/hint-to/);
+    await move(page, 'e1', 'e8');
+    await expect(page.locator('.js-banner h2')).toHaveText('해냈어요! 🎉');
+  });
+
+  test('길 찾기: 목표 칸이 표시되고 도착하면 완료', async ({ page }) => {
+    await openLesson(page, '길 찾기');
+    await expect(page.locator(sq('h8'))).toHaveClass(/target/);
+    for (const [f, t] of [['b1', 'c3'], ['c3', 'd5'], ['d5', 'e7'], ['e7', 'g6'], ['g6', 'h8']] as const) {
+      await page.click(sq(f));
+      await page.click(sq(t));
+      await page.waitForTimeout(80);
+    }
+    await expect(page.locator('.js-banner h2')).toHaveText('해냈어요! 🎉');
+  });
+});

@@ -69,8 +69,8 @@ describe('배우기 레슨', () => {
     }
   });
 
-  it('각 레슨에는 흰 말 한 종류와 잡을 검은 말이 있다', () => {
-    for (const lesson of LESSONS) {
+  it('말 배우기 레슨에는 흰 말 한 종류와 잡을 검은 말이 있다', () => {
+    for (const lesson of LESSONS.filter((l) => l.goal.kind === 'capture-all')) {
       const pos = parseFen(lesson.fen);
       const white = pos.board.filter((p) => p && p.color === 'w');
       const black = pos.board.filter((p) => p && p.color === 'b');
@@ -81,14 +81,51 @@ describe('배우기 레슨', () => {
     }
   });
 
+  it('규칙 레슨은 시작 배치에서 목표를 이룰 수 있다', () => {
+    for (const lesson of LESSONS) {
+      const pos = parseFen(lesson.fen);
+      const moves = generateLegalMoves(pos);
+      switch (lesson.goal.kind) {
+        case 'castle':
+          expect(moves.some((m) => m.castle), lesson.id).toBe(true);
+          break;
+        case 'promote':
+          expect(moves.some((m) => m.promotion), lesson.id).toBe(true);
+          break;
+        case 'en-passant':
+          expect(moves.some((m) => m.enPassant), lesson.id).toBe(true);
+          break;
+        case 'escape-check':
+          expect(new Game(pos).isCheck(), lesson.id).toBe(true);
+          expect(moves.length, lesson.id).toBeGreaterThan(1);
+          break;
+        case 'checkmate':
+          expect(
+            moves.some((m) => {
+              const g = new Game(pos);
+              g.playMove(m);
+              return g.status().kind === 'checkmate';
+            }),
+            lesson.id,
+          ).toBe(true);
+          break;
+        case 'reach':
+          expect(pos.board[fromAlgebraic(lesson.goal.square)], lesson.id).toBeNull();
+          break;
+        case 'capture-all':
+          break;
+      }
+    }
+  });
+
   it('레슨은 첫 수부터 막히지 않는다', () => {
     for (const lesson of LESSONS) {
       expect(generateLegalMoves(parseFen(lesson.fen)).length, lesson.id).toBeGreaterThan(0);
     }
   });
 
-  it('모든 레슨은 검은 말을 전부 잡아 끝낼 수 있다', () => {
-    for (const lesson of LESSONS) {
+  it('말 배우기 레슨은 검은 말을 전부 잡아 끝낼 수 있다', () => {
+    for (const lesson of LESSONS.filter((l) => l.goal.kind === 'capture-all')) {
       expect(lessonSolvable(lesson.fen), lesson.id).toBe(true);
     }
   });
