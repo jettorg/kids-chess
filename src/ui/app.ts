@@ -10,6 +10,8 @@ import { BoardView } from './board';
 import { pieceSvg } from './pieces';
 import { isSoundEnabled, play, setSoundEnabled } from './sound';
 import { Banner, showPromotionDialog } from './dialogs';
+import { showHelpDialog } from './help';
+import { installErrorCapture } from './errors';
 import { renderGuide, renderLearnPanel, renderPlayPanel, renderPuzzlePanel, type PanelHost } from './panels';
 import {
   DEFAULT_SETTINGS,
@@ -73,6 +75,8 @@ export class App implements PanelHost {
     tabs: HTMLElement;
     lang: HTMLElement;
     soundBtn: HTMLButtonElement;
+    helpBtn: HTMLButtonElement;
+    helpOverlay: HTMLElement;
     boardHost: HTMLElement;
     status: HTMLElement;
     trayTop: HTMLElement;
@@ -85,6 +89,7 @@ export class App implements PanelHost {
   };
 
   constructor(root: HTMLElement) {
+    installErrorCapture();
     this.settings = load(SETTINGS_KEY, DEFAULT_SETTINGS);
     this.progress = load(PROGRESS_KEY, { lessons: [], puzzles: [] } as Progress);
     this.puzzleIndex = Math.max(0, Math.min(this.progress.puzzleIndex ?? 0, PUZZLES.length - 1));
@@ -107,7 +112,10 @@ export class App implements PanelHost {
                 `<span class="lang-full">${l.label}</span><span class="lang-short" aria-hidden="true">${l.code.toUpperCase()}</span></button>`,
             ).join('')}
           </div>
-          <button type="button" class="icon-btn js-sound">🔊</button>
+          <div class="topbar-actions">
+            <button type="button" class="icon-btn js-help">❔</button>
+            <button type="button" class="icon-btn js-sound">🔊</button>
+          </div>
         </header>
         <main class="layout">
           <section class="stage">
@@ -121,6 +129,7 @@ export class App implements PanelHost {
         </main>
         <div class="overlay js-promo hidden"></div>
         <div class="overlay js-banner hidden"></div>
+        <div class="overlay js-help-overlay hidden"></div>
         <div class="toast js-toast hidden" role="status"></div>
       </div>
     `;
@@ -132,6 +141,8 @@ export class App implements PanelHost {
       tabs: q('.tabs'),
       lang: q('.js-lang'),
       soundBtn: q<HTMLButtonElement>('.js-sound'),
+      helpBtn: q<HTMLButtonElement>('.js-help'),
+      helpOverlay: q('.js-help-overlay'),
       boardHost: q('.js-board'),
       status: q('.js-status'),
       trayTop: q('.js-tray-top'),
@@ -180,6 +191,18 @@ export class App implements PanelHost {
       this.render();
     });
 
+    this.el.helpBtn.addEventListener('click', () => {
+      showHelpDialog(this.el.helpOverlay, {
+        progress: this.progress,
+        applyProgress: (progress) => {
+          this.progress = progress;
+          save(PROGRESS_KEY, this.progress);
+          this.puzzleIndex = Math.max(0, Math.min(this.progress.puzzleIndex ?? 0, PUZZLES.length - 1));
+          this.render();
+        },
+      });
+    });
+
     this.el.soundBtn.addEventListener('click', () => {
       this.settings.sound = !this.settings.sound;
       setSoundEnabled(this.settings.sound);
@@ -211,6 +234,7 @@ export class App implements PanelHost {
       el.setAttribute('aria-pressed', String(active));
     });
     this.el.soundBtn.setAttribute('aria-label', t('soundToggle'));
+    this.el.helpBtn.setAttribute('aria-label', t('helpButton'));
     this.board.setLabel(t('boardLabel'));
   }
 

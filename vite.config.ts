@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { defineConfig, type Plugin } from 'vitest/config';
 
 /** 캐시 이름용 짧은 해시 (FNV-1a). Node 타입 없이도 동작한다. */
@@ -99,8 +100,15 @@ self.addEventListener('fetch', (event) => {
 `;
 }
 
+const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')) as { version: string };
+const buildId = `${(process.env.GITHUB_SHA ?? 'local').slice(0, 7)} ${new Date().toISOString().slice(0, 16)}`;
+
 export default defineConfig({
   base: './',
+  define: {
+    __APP_VERSION__: JSON.stringify(pkg.version),
+    __BUILD_ID__: JSON.stringify(buildId),
+  },
   plugins: [serviceWorkerPlugin()],
   build: { outDir: 'dist', target: 'es2022' },
   test: { environment: 'node', include: ['tests/**/*.test.ts'] },
