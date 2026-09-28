@@ -2,7 +2,7 @@ import type { Color, Move } from '../engine/types';
 import { Game, fromAlgebraic } from '../engine';
 import { AI_LEVELS } from '../ai/ai';
 import { LESSONS, PIECE_GUIDE, RULES } from '../data/lessons';
-import { PUZZLES } from '../data/puzzles';
+import { PUZZLES, type PuzzleTheme } from '../data/puzzles';
 import { L, t } from '../i18n';
 import { pieceIcon } from './pieces';
 import { play } from './sound';
@@ -19,6 +19,12 @@ export interface PanelHost {
   settingsOpen: boolean;
   readonly lessonIndex: number;
   readonly puzzleIndex: number;
+  readonly puzzleTheme: PuzzleTheme | 'all';
+  readonly puzzleBusy: boolean;
+  visiblePuzzles(): number[];
+  setPuzzleTheme(theme: PuzzleTheme | 'all'): void;
+  recommendedPuzzleIndex(): number;
+  currentPuzzleAnswer(): string | null;
   interactiveColor(): Color | null;
   saveSettings(): void;
   newGame(): void;
@@ -178,24 +184,55 @@ export function renderLearnPanel(host: PanelHost, panel: HTMLElement): void {
   });
 }
 
+const THEMES: (PuzzleTheme | 'all')[] = ['all', 'mate1', 'mate2', 'fork', 'hanging', 'pin'];
+
+function themeLabel(theme: PuzzleTheme | 'all'): string {
+  switch (theme) {
+    case 'all':
+      return t('themeAll');
+    case 'mate1':
+      return t('themeMate1');
+    case 'mate2':
+      return t('themeMate2');
+    case 'fork':
+      return t('themeFork');
+    case 'hanging':
+      return t('themeHanging');
+    case 'pin':
+      return t('themePin');
+  }
+}
+
 export function renderPuzzlePanel(host: PanelHost, panel: HTMLElement): void {
   const { progress, puzzleIndex } = host;
   const puzzle = PUZZLES[puzzleIndex]!;
   const solved = progress.puzzles.includes(puzzle.id);
+  const visible = host.visiblePuzzles();
+  const position = visible.indexOf(puzzleIndex);
+  const task =
+    puzzle.theme === 'mate1'
+      ? t('puzzleTaskMate1', puzzle.side)
+      : puzzle.theme === 'mate2'
+        ? t('puzzleTaskMate2', puzzle.side)
+        : t('puzzleTaskTactic', puzzle.side);
+  const solvedInView = visible.filter((i) => progress.puzzles.includes(PUZZLES[i]!.id)).length;
+
   panel.innerHTML = `
     <div class="card">
       <div class="card-head">
-        <h2>${solved ? '✅ ' : ''}${L(puzzle.title)}</h2>
+        <h2>${solved ? '✅ ' : ''}${L(puzzle.title)} · ${themeLabel(puzzle.theme)}</h2>
         ${puzzle.rating ? `<span class="muted">${t('puzzleRating', puzzle.rating)}</span>` : ''}
       </div>
-      <p>${t('puzzleTask')}</p>
+      <p>${task}</p>
       <div class="choice-row js-puzzle-controls"></div>
       <p class="muted js-puzzle-hint hidden">${L(puzzle.hint)}</p>
     </div>
     <div class="card">
-      <h2>${t('puzzleCounter', puzzleIndex + 1, PUZZLES.length)}</h2>
+      <h2>${t('puzzleCounter', position + 1, visible.length)}</h2>
       <div class="choice-row js-puzzle-nav"></div>
-      <p class="muted">${t('puzzleProgress', progress.puzzles.length, PUZZLES.length)}</p>
+      <h3>${t('themeLabel')}</h3>
+      <div class="choice-row js-puzzle-themes"></div>
+      <p class="muted">${t('puzzleProgress', solvedInView, visible.length)}</p>
       ${puzzle.source === 'lichess' ? `<p class="muted">${t('lichessCredit')}</p>` : ''}
     </div>
   `;
@@ -212,32 +249,40 @@ export function renderPuzzlePanel(host: PanelHost, panel: HTMLElement): void {
       'chip',
     ),
   );
-  controls.appendChild(
-    button(
-      t('showAnswer'),
-      () => {
-        const from = fromAlgebraic(puzzle.solution.slice(0, 2));
-        const to = fromAlgebraic(puzzle.solution.slice(2, 4));
-        host.setHint(host.game.legalMoves(from).find((m) => m.to === to) ?? null);
-        play('star');
-        host.render();
-      },
-      'chip',
-    ),
+  const answerButton = button(
+    t('showAnswer'),
+    () => {
+      const answer = host.currentPuzzleAnswer();
+      if (!answer) return;
+      const from = fromAlgebraic(answer.slice(0, 2));
+      const to = fromAlgebraic(answer.slice(2, 4));
+      host.setHint(host.game.legalMoves(from).find((m) => m.to === to) ?? null);
+      play('star');
+      host.render();
+    },
+    'chip',
   );
+  answerButton.disabled = host.puzzleBusy;
+  controls.appendChild(answerButton);
 
   const nav = panel.querySelector<HTMLElement>('.js-puzzle-nav')!;
-  const prev = button(t('prevPuzzle'), () => host.startPuzzle(puzzleIndex - 1), 'chip');
-  prev.disabled = puzzleIndex === 0;
+  const prev = button(t('prevPuzzle'), () => host.startPuzzle(visible[position - 1]!), 'chip');
+  prev.disabled = position <= 0;
   nav.appendChild(prev);
-  const next = button(t('nextPuzzleShort'), () => host.startPuzzle(puzzleIndex + 1), 'chip');
-  next.disabled = puzzleIndex >= PUZZLES.length - 1;
+  const next = button(t('nextPuzzleShort'), () => host.startPuzzle(visible[position + 1]!), 'chip');
+  next.disabled = position < 0 || position >= visible.length - 1;
   nav.appendChild(next);
-  const later = PUZZLES.findIndex((item, index) => index > puzzleIndex && !progress.puzzles.includes(item.id));
-  const firstUnsolved = later >= 0 ? later : PUZZLES.findIndex((item) => !progress.puzzles.includes(item.id));
-  const jump = button(t('nextUnsolved'), () => host.startPuzzle(firstUnsolved), 'chip');
-  jump.disabled = firstUnsolved < 0 || firstUnsolved === puzzleIndex;
+  const recommended = host.recommendedPuzzleIndex();
+  const jump = button(t('recommended'), () => host.startPuzzle(recommended), 'chip');
+  jump.disabled = recommended < 0;
   nav.appendChild(jump);
+
+  const themes = panel.querySelector<HTMLElement>('.js-puzzle-themes')!;
+  for (const theme of THEMES) {
+    themes.appendChild(
+      button(themeLabel(theme), () => host.setPuzzleTheme(theme), host.puzzleTheme === theme ? 'chip active' : 'chip'),
+    );
+  }
 }
 
 export function renderGuide(guide: HTMLElement): void {

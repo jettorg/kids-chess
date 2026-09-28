@@ -14,6 +14,10 @@ export interface Settings {
 export interface Progress {
   lessons: string[];
   puzzles: string[];
+  /** 마지막으로 보던 퍼즐 (다시 열면 이어서) */
+  puzzleIndex?: number;
+  /** 추천 문제를 고를 때 쓰는 목표 난이도. 풀면 올라가고 틀리면 내려간다. */
+  puzzleTarget?: number;
 }
 
 export interface SavedGame {

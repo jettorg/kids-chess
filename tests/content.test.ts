@@ -8,23 +8,30 @@ import {
   parseFen,
 } from '../src/engine';
 import { chooseMove, searchBestMove, suggestMove } from '../src/ai/ai';
+import type { PieceType } from '../src/engine/types';
 import { LESSONS } from '../src/data/lessons';
 import { HANDMADE_PUZZLES, PUZZLES } from '../src/data/puzzles';
 import { GENERATED_PUZZLES } from '../src/data/puzzles.generated';
 import { eul, euro } from '../src/ui/ko';
 
-function parseUci(text: string): { from: number; to: number } {
-  return { from: fromAlgebraic(text.slice(0, 2)), to: fromAlgebraic(text.slice(2, 4)) };
+function parseUci(text: string): { from: number; to: number; promotion?: PieceType } {
+  return {
+    from: fromAlgebraic(text.slice(0, 2)),
+    to: fromAlgebraic(text.slice(2, 4)),
+    ...(text[4] ? { promotion: text[4] as PieceType } : {}),
+  };
 }
 
-function isMate(fen: string, uci: string): boolean {
-  const pos = parseFen(fen);
-  const { from, to } = parseUci(uci);
-  const move = findMove(pos, from, to);
-  if (!move) return false;
-  const game = new Game(pos);
-  game.playMove(move);
-  return game.status().kind === 'checkmate';
+/** 정답 수열을 끝까지 둔 뒤의 게임 (수가 불법이면 null) */
+function playLine(fen: string, line: string[]): Game | null {
+  const game = new Game(parseFen(fen));
+  for (const uci of line) {
+    const { from, to, promotion } = parseUci(uci);
+    const move = findMove(game.position, from, to, promotion);
+    if (!move) return null;
+    game.playMove(move);
+  }
+  return game;
 }
 
 /** 검은 말이 모두 잡힐 수 있는지 너비 우선으로 확인한다 (연습 모드: 흰색만 움직임) */
@@ -87,23 +94,27 @@ describe('배우기 레슨', () => {
   });
 });
 
-describe('한 수 메이트 퍼즐', () => {
-  it('제시된 정답이 실제로 체크메이트다', () => {
+describe('퍼즐', () => {
+  it('정답 수열이 모두 합법이고 메이트 문제는 실제로 체크메이트로 끝난다', () => {
     for (const puzzle of PUZZLES) {
-      expect(isMate(puzzle.fen, puzzle.solution), puzzle.id).toBe(true);
+      const game = playLine(puzzle.fen, puzzle.line);
+      expect(game, puzzle.id).not.toBeNull();
+      if (puzzle.mateAtEnd) expect(game!.status().kind, puzzle.id).toBe('checkmate');
+      // 내 수로 시작해 내 수로 끝난다 (홀수 길이)
+      expect(puzzle.line.length % 2, puzzle.id).toBe(1);
     }
   });
 
-  it('시작 배치에서 흰색이 아직 체크메이트를 당하지 않았다', () => {
+  it('시작 배치는 푸는 쪽 차례이고 아직 끝나지 않았다', () => {
     for (const puzzle of PUZZLES) {
       const game = new Game(parseFen(puzzle.fen));
       expect(game.status().kind, puzzle.id).toBe('playing');
-      expect(game.turn, puzzle.id).toBe('w');
+      expect(game.turn, puzzle.id).toBe(puzzle.side);
     }
   });
 
   it('힌트 탐색이 한 수 메이트를 찾아낸다', () => {
-    for (const puzzle of PUZZLES) {
+    for (const puzzle of PUZZLES.filter((p) => p.theme === 'mate1')) {
       const move = suggestMove(parseFen(puzzle.fen));
       expect(move, puzzle.id).not.toBeNull();
       const game = new Game(parseFen(puzzle.fen));
@@ -188,22 +199,32 @@ describe('한글 조사', () => {
 describe('가져온 퍼즐', () => {
   it('입문 6개 뒤에 이어지고 ID 가 겹치지 않는다', () => {
     expect(PUZZLES.length).toBe(HANDMADE_PUZZLES.length + GENERATED_PUZZLES.length);
-    expect(GENERATED_PUZZLES.length).toBeGreaterThanOrEqual(100);
+    expect(GENERATED_PUZZLES.length).toBeGreaterThanOrEqual(200);
     expect(new Set(PUZZLES.map((p) => p.id)).size).toBe(PUZZLES.length);
   });
 
-  it('난이도가 쉬운 순으로 정렬돼 있다', () => {
+  it('테마마다 문제가 있고 흑이 푸는 문제도 있다', () => {
+    for (const theme of ['mate1', 'mate2', 'fork', 'hanging', 'pin'] as const) {
+      expect(GENERATED_PUZZLES.filter((g) => g.theme === theme).length, theme).toBeGreaterThan(0);
+    }
+    expect(GENERATED_PUZZLES.filter((g) => g.side === 'b').length).toBeGreaterThan(20);
+    expect(GENERATED_PUZZLES.filter((g) => g.theme === 'mate2').every((g) => g.line.length === 3)).toBe(true);
+  });
+
+  it('테마 안에서 난이도가 쉬운 순으로 정렬돼 있다', () => {
     for (let i = 1; i < GENERATED_PUZZLES.length; i++) {
-      expect(GENERATED_PUZZLES[i]!.rating).toBeGreaterThanOrEqual(GENERATED_PUZZLES[i - 1]!.rating);
+      const a = GENERATED_PUZZLES[i - 1]!;
+      const b = GENERATED_PUZZLES[i]!;
+      if (a.theme === b.theme) expect(b.rating, b.id).toBeGreaterThanOrEqual(a.rating);
     }
   });
 
-  it('모두 흰색 차례이고 힌트가 메이트 말과 맞는다', () => {
+  it('첫 정답 수를 두는 말이 힌트 말과 맞는다', () => {
     for (const g of GENERATED_PUZZLES) {
       const pos = parseFen(g.fen);
-      expect(pos.turn, g.id).toBe('w');
-      const { from, to } = parseUci(g.solution);
-      const move = findMove(pos, from, to);
+      expect(pos.turn, g.id).toBe(g.side);
+      const { from, to, promotion } = parseUci(g.line[0]!);
+      const move = findMove(pos, from, to, promotion);
       expect(move, g.id).not.toBeNull();
       expect(move!.promotion ?? move!.piece, g.id).toBe(g.piece);
     }

@@ -3,7 +3,8 @@ import { Game, findKing, initialPosition, parseFen } from '../engine';
 import { AiClient } from '../ai/client';
 import type { MoveRef } from '../ai/worker';
 import { LESSONS } from '../data/lessons';
-import { PUZZLES } from '../data/puzzles';
+import { PUZZLES, puzzleRating, type PuzzleTheme } from '../data/puzzles';
+import { fromAlgebraic, toAlgebraic } from '../engine/position';
 import { L, LOCALES, getLocale, setLocale, t, type Locale } from '../i18n';
 import { BoardView } from './board';
 import { pieceSvg } from './pieces';
@@ -41,6 +42,10 @@ export class App implements PanelHost {
   settingsOpen = true;
   lessonIndex = 0;
   puzzleIndex = 0;
+  /** 퍼즐 화면에서 보여줄 문제 종류 (전체 또는 한 테마) */
+  puzzleTheme: PuzzleTheme | 'all' = 'all';
+  /** 상대 응수를 자동으로 두는 중 */
+  puzzleBusy = false;
 
   private screen: Screen = 'play';
   private board: BoardView;
@@ -49,8 +54,10 @@ export class App implements PanelHost {
   private hint: Move | null = null;
   private pendingPromotion: { from: Square; to: Square } | null = null;
   private puzzleSolved = false;
+  /** 정답 수열에서 다음에 내가 둘 수의 위치 (0, 2, 4 …) */
+  private puzzleStep = 0;
   /** 상태 줄에 잠시 보여줄 안내 (사전 키로 저장해 언어를 바꿔도 맞게 보이도록) */
-  private message: 'learnStuck' | 'puzzleWrong' | null = null;
+  private message: 'learnStuck' | 'puzzleWrong' | 'puzzleWrongLine' | null = null;
 
   /** 탐색은 Web Worker 에서 돈다. 세대 번호로 늦게 도착한 결과를 버린다. */
   private ai = new AiClient();
@@ -76,6 +83,7 @@ export class App implements PanelHost {
   constructor(root: HTMLElement) {
     this.settings = load(SETTINGS_KEY, DEFAULT_SETTINGS);
     this.progress = load(PROGRESS_KEY, { lessons: [], puzzles: [] } as Progress);
+    this.puzzleIndex = Math.max(0, Math.min(this.progress.puzzleIndex ?? 0, PUZZLES.length - 1));
     setSoundEnabled(this.settings.sound);
 
     root.innerHTML = `
@@ -298,9 +306,53 @@ export class App implements PanelHost {
     this.selected = null;
     this.hint = null;
     this.puzzleSolved = false;
+    this.puzzleBusy = false;
+    this.puzzleStep = 0;
     this.message = null;
+    this.progress.puzzleIndex = this.puzzleIndex;
+    save(PROGRESS_KEY, this.progress);
     this.banner.hide();
     this.render();
+  }
+
+  /** 현재 필터에 해당하는 퍼즐 번호 목록 */
+  visiblePuzzles(): number[] {
+    const out: number[] = [];
+    PUZZLES.forEach((p, i) => {
+      if (this.puzzleTheme === 'all' || p.theme === this.puzzleTheme) out.push(i);
+    });
+    return out;
+  }
+
+  setPuzzleTheme(theme: PuzzleTheme | 'all'): void {
+    this.puzzleTheme = theme;
+    const visible = this.visiblePuzzles();
+    if (!visible.includes(this.puzzleIndex)) this.startPuzzle(visible[0] ?? 0);
+    else this.render();
+  }
+
+  /** 안 푼 문제 중 목표 난이도에 가장 가까운 것 (없으면 -1) */
+  recommendedPuzzleIndex(): number {
+    const target = this.progress.puzzleTarget ?? 450;
+    let best = -1;
+    let bestGap = Infinity;
+    for (const i of this.visiblePuzzles()) {
+      const puzzle = PUZZLES[i]!;
+      if (i === this.puzzleIndex || this.progress.puzzles.includes(puzzle.id)) continue;
+      const gap = Math.abs(puzzleRating(puzzle) - target);
+      if (gap < bestGap) {
+        bestGap = gap;
+        best = i;
+      }
+    }
+    return best;
+  }
+
+  /** 풀면 목표 난이도를 올리고 틀리면 내린다 */
+  private adjustPuzzleTarget(delta: number): void {
+    const current = this.progress.puzzleTarget ?? 450;
+    this.progress.puzzleTarget = Math.max(300, Math.min(2000, current + delta));
+    save(PROGRESS_KEY, this.progress);
   }
 
   // ───────────────────────── 조작 ─────────────────────────
@@ -310,7 +362,7 @@ export class App implements PanelHost {
     if (this.thinking || this.pendingPromotion) return null;
     if (this.screen === 'guide') return null;
     if (this.screen === 'learn') return 'w';
-    if (this.screen === 'puzzle') return this.puzzleSolved ? null : 'w';
+    if (this.screen === 'puzzle') return this.puzzleSolved || this.puzzleBusy ? null : PUZZLES[this.puzzleIndex]!.side;
     if (this.game.status().kind !== 'playing') return null;
     if (this.settings.opponent === 'human') return this.game.turn;
     return this.game.turn === this.settings.playerColor ? this.game.turn : null;
@@ -380,16 +432,16 @@ export class App implements PanelHost {
     else play('move');
 
     this.render();
-    this.afterMove();
+    this.afterMove(move);
   }
 
-  private afterMove(): void {
+  private afterMove(move: Move): void {
     if (this.screen === 'learn') {
       this.checkLessonDone();
       return;
     }
     if (this.screen === 'puzzle') {
-      this.checkPuzzleAnswer();
+      this.checkPuzzleAnswer(move);
       return;
     }
 
@@ -512,6 +564,12 @@ export class App implements PanelHost {
     this.hint = move;
   }
 
+  /** 퍼즐에서 지금 둘 정답 수 (UCI) */
+  currentPuzzleAnswer(): string | null {
+    const puzzle = PUZZLES[this.puzzleIndex]!;
+    return puzzle.line[this.puzzleStep] ?? null;
+  }
+
   private presentHint(move: Move): void {
     this.hint = move;
     this.selected = null;
@@ -584,37 +642,68 @@ export class App implements PanelHost {
     this.render();
   }
 
-  private checkPuzzleAnswer(): void {
-    if (this.game.status().kind === 'checkmate') {
-      this.puzzleSolved = true;
-      const puzzle = PUZZLES[this.puzzleIndex]!;
-      if (!this.progress.puzzles.includes(puzzle.id)) {
-        this.progress.puzzles.push(puzzle.id);
-        save(PROGRESS_KEY, this.progress);
-      }
-      play('win');
-      const isLast = this.puzzleIndex >= PUZZLES.length - 1;
-      this.banner.show(
-        t('puzzleDoneTitle'),
-        t('puzzleDoneDetail'),
-        isLast
-          ? [{ label: t('goPlay'), action: () => this.setScreen('play') }]
-          : [{ label: t('nextPuzzle'), action: () => this.startPuzzle(this.puzzleIndex + 1) }],
-        true,
-      );
+  private checkPuzzleAnswer(move: Move): void {
+    const puzzle = PUZZLES[this.puzzleIndex]!;
+    const step = this.puzzleStep;
+    const isLast = step >= puzzle.line.length - 1;
+    const mated = this.game.status().kind === 'checkmate';
+    const uci = toAlgebraic(move.from) + toAlgebraic(move.to) + (move.promotion ?? '');
+    // 마지막 수가 메이트인 문제는 다른 메이트 수도 인정한다. 중간 수는 정답 수열과 같아야 한다.
+    const correct = isLast && puzzle.mateAtEnd ? mated : uci === puzzle.line[step] || (isLast && mated);
+
+    if (!correct) {
+      this.adjustPuzzleTarget(-25);
+      this.message = puzzle.mateAtEnd && isLast ? 'puzzleWrong' : 'puzzleWrongLine';
       this.render();
+      setTimeout(() => {
+        if (this.screen !== 'puzzle' || this.puzzleSolved) return;
+        this.game.undo();
+        this.selected = null;
+        this.message = null;
+        this.render();
+      }, 1100);
       return;
     }
 
-    // 정답이 아니면 잠시 보여준 뒤 되돌린다.
-    this.message = 'puzzleWrong';
-    this.render();
-    setTimeout(() => {
-      if (this.screen !== 'puzzle' || this.puzzleSolved) return;
-      this.game.undo();
-      this.selected = null;
+    if (!isLast) {
+      // 상대 응수를 잠시 뒤 자동으로 둔다.
+      this.puzzleBusy = true;
       this.render();
-    }, 1100);
+      const generation = this.aiGeneration;
+      setTimeout(() => {
+        if (generation !== this.aiGeneration || this.screen !== 'puzzle') return;
+        const reply = puzzle.line[step + 1]!;
+        const replyMove = this.game
+          .legalMoves(fromAlgebraic(reply.slice(0, 2)))
+          .find((m) => m.to === fromAlgebraic(reply.slice(2, 4)) && (m.promotion ?? '') === (reply[4] ?? ''));
+        if (replyMove) {
+          this.game.playMove(replyMove);
+          play(replyMove.captured ? 'capture' : 'move');
+        }
+        this.puzzleStep = step + 2;
+        this.puzzleBusy = false;
+        this.render();
+      }, 550);
+      return;
+    }
+
+    this.puzzleSolved = true;
+    if (!this.progress.puzzles.includes(puzzle.id)) {
+      this.progress.puzzles.push(puzzle.id);
+      this.adjustPuzzleTarget(40);
+    }
+    play('win');
+    const visible = this.visiblePuzzles();
+    const next = visible.find((i) => i > this.puzzleIndex);
+    this.banner.show(
+      t('puzzleDoneTitle'),
+      t('puzzleDoneDetail'),
+      next === undefined
+        ? [{ label: t('goPlay'), action: () => this.setScreen('play') }]
+        : [{ label: t('nextPuzzle'), action: () => this.startPuzzle(next) }],
+      true,
+    );
+    this.render();
   }
 
   // ───────────────────────── 그리기 ─────────────────────────
@@ -627,7 +716,12 @@ export class App implements PanelHost {
       return left === 0 ? t('learnDoneStatus', L(lesson.title)) : t('learnStatus', lesson.piece, left);
     }
     if (this.screen === 'puzzle') {
-      return this.puzzleSolved ? t('puzzleSolvedStatus') : t('puzzleStatus');
+      if (this.puzzleSolved) return t('puzzleSolvedStatus');
+      if (this.puzzleBusy) return t('puzzleGood');
+      const puzzle = PUZZLES[this.puzzleIndex]!;
+      if (puzzle.theme === 'mate1') return t('puzzleStatusMate1', puzzle.side);
+      if (puzzle.theme === 'mate2') return t('puzzleStatusMate2', puzzle.side);
+      return t('puzzleStatusTactic', puzzle.side);
     }
     if (this.thinking) return t('thinking');
 
@@ -656,9 +750,11 @@ export class App implements PanelHost {
         ? findKing(this.game.position, this.game.turn)
         : null;
 
+    // 퍼즐은 푸는 쪽이 아래로 오도록 판을 돌린다 (설정의 뒤집기와 별개)
+    const flipped = this.screen === 'puzzle' ? PUZZLES[this.puzzleIndex]!.side === 'b' : this.settings.flipped;
     this.board.render({
       position: this.game.position,
-      flipped: this.settings.flipped,
+      flipped,
       selected: this.selected,
       destinations: this.selected === null ? [] : this.game.legalMoves(this.selected),
       lastMove: this.game.lastMove,
