@@ -147,3 +147,9 @@ Eleven of the fifteen limitations from the review are resolved. The rest, and ho
 ## Credits
 
 - Puzzles: [Lichess puzzle database](https://database.lichess.org) (CC0 1.0)
+- Evaluation: PeSTO piece-square tables (Ronald Friederich)
+- Piece drawings, icons, and sound effects are all original (no external image or audio files).
+
+## License
+
+[MIT](LICENSE)

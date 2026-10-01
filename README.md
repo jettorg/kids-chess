@@ -147,3 +147,9 @@ tests/        Vitest 단위 테스트
 ## 출처
 
 - 퍼즐: [Lichess 퍼즐 데이터베이스](https://database.lichess.org) (CC0 1.0)
+- 평가 함수: PeSTO 말-칸 표 (Ronald Friederich)
+- 말 그림, 아이콘, 효과음은 모두 직접 만들었습니다 (외부 이미지·오디오 파일 없음).
+
+## 라이선스
+
+[MIT](LICENSE)
